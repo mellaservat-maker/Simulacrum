@@ -1,0 +1,44 @@
+# ===== 密钥：绝不进版本库（任何时候都不要 commit 这两个文件）=====
+secrets_local.py
+secrets_override.py
+secrets_local.py.tmp
+secrets_override.py.tmp
+*.key
+*.pem
+.env
+.env.*
+
+# ===== 运行时数据（含对话原文与记忆，属隐私）=====
+logs/
+sessions/
+*.jsonl
+
+# ===== 历史快照（体积大，与源码重复）=====
+_snapshot_*/
+
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+
+# ===== 系统与临时 =====
+Thumbs.db
+Desktop.ini
+.DS_Store
+*.tmp
+*.bak
+
+# ===== 中间态 hash 基准（只保留封版类）=====
+*改动前_hash基准.txt
+*改动后_hash基准.txt
+*Phase*_hash基准.txt
+*符号修正后_hash基准.txt
+T012_*.txt
+T013_*.txt
+T33_*.txt
+T34_*.txt
+V4*_hash基准.txt
+M3T3B_*hash基准*

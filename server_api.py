@@ -15,12 +15,14 @@
 #   GET  /health                 存活探针
 #
 # 启动：D:\aiqg\venv\Scripts\python.exe -m uvicorn server_api:app
-#        --host 127.0.0.1 --port 8000
+#        --host 0.0.0.0 --port 8000
+#        （0.0.0.0 允许同一局域网的手机访问；仅本机用 127.0.0.1 亦可）
 # ============================================================
 
 import os
 import sys
 import threading
+import time
 
 try:
     import requests as _requests
@@ -94,6 +96,9 @@ class ChatIn(BaseModel):
     session_id: str = "default"
     deep_think: bool = False     # 前端 UI 开关；当前链路无此能力，忽略
     web_search: bool = False     # 同上
+    # [041] 性格预设：standard / sensitive / gentle（也接受中文别名）。
+    #   留空表示沿用会话当前性格；传入时在开轮前写入会话（仍是冷切换）。
+    profile_id: str = ""
 
 
 class ResetIn(BaseModel):
@@ -138,6 +143,26 @@ def _state_payload(st, log=None):
         "buffer": len(st["memory_buffer"]),
         "packages": len(st["archiver"].get_packages()),
         "tokens": token_stats(),
+        # [041] 性格、破防冷却与阈值，前端直接展示
+        "profile_id": str(st.get("profile_id", config.PERSONALITY_DEFAULT)),
+        "profile_label": config.PERSONALITY_PROFILES.get(
+            st.get("profile_id", config.PERSONALITY_DEFAULT), {}).get("label", ""),
+        "express_cooldown": int(st.get("express_cooldown", 0)),
+        "thresholds": {
+            "inhibit_high": float(config.POLICY_THRESHOLD_INHIBIT_HIGH),
+            "inhibit_mid": float(config.POLICY_THRESHOLD_INHIBIT_MID),
+            "express_valence": float(config.POLICY_EXPRESS_VALENCE),
+            "express_inhibit": float(config.POLICY_EXPRESS_INHIBIT),
+        },
+        "e": [float(x) for x in st.get("E_prev", [0.0, 0.0, 0.0, 0.0])],
+        # [042] 无轮次（log is None）时也必须给出这四项，否则前端只能显示
+        #   占位值，误以为初始状态是 0.18/0.92/+0.16。
+        #   口径（042 裁决）：I_inhibit 首轮未计算，返回 0.0 = 无抑制状态；
+        #   action 取 policy 默认值与首轮默认动作一致。
+        "w_PFC": float(st.get("w_PFC", 0.0)),
+        "I_inhibit": 0.0,
+        "e0": float(st.get("E_prev", [0.0])[0]),
+        "action": "task_first",
     }
     if log is not None:
         base.update({
@@ -146,7 +171,10 @@ def _state_payload(st, log=None):
             "threat_now": float(log.get("threat_now", 0.0)),
             "alpha_mode": float(log.get("alpha_mode", 0.0)),
             "e0": float(log["E_final"][0]),
+            "e": [float(x) for x in log["E_final"]],
             "action": log.get("action"),
+            "danger_now": float(log.get("danger_now", 0.0)),
+            "express_cooldown": int(st.get("express_cooldown", 0)),
             "turn_tokens": int(log.get("turn_tokens", 0)),
             "S": [float(x) for x in log.get("S", [])],
             "S_source": log.get("S_source"),
@@ -187,6 +215,40 @@ def _maybe_open_browser():
         "http://127.0.0.1:8000/")).start()
 
 
+@app.get("/api/sessions")
+def api_list_sessions():
+    """[044] 历史会话列表：扫描 sessions/ 目录，供前端下拉恢复任意存档。
+
+    返回 default（config.DEFAULT_WEB_SESSION，前端首次打开默认用它）
+    与 sessions 列表（session_id / size / mtime，按修改时间倒序）。
+    """
+    items = []
+    if _PERSIST:
+        for f in session_store.list_files():
+            items.append({
+                "session_id": f["session_id"],
+                "size": int(f["size"]),
+                "mtime": float(f["mtime"]),
+            })
+    return {"default": config.DEFAULT_WEB_SESSION, "sessions": items}
+
+
+@app.get("/api/history")
+def api_history(session_id: str = "default"):
+    """[045] 返回该会话的完整聊天记录（用户 + AI 成对追加）。
+
+    内存未命中时会先按 session_id 从 sessions/ 恢复，因此换浏览器/
+    换设备首次打开也能拿到同一份文字历史。旧存档无 messages 字段 → 空列表。
+    """
+    with _LOCK:
+        st = _get_session(session_id)
+        return {
+            "session_id": session_id,
+            "round": int(st.get("round_counter", 0)),
+            "messages": session_store._dump_messages(st.get("messages")),
+        }
+
+
 @app.get("/sessions")
 def list_sessions():
     """[021.3/021.4] 内存中的会话 + 磁盘上的会话文件。"""
@@ -213,6 +275,13 @@ def chat(body: ChatIn):
         return {"reply": "", "error": "empty message"}
     with _LOCK:
         st = _get_session(body.session_id)
+        # [041] 性格冷切换：请求里带 profile_id 时写入本会话，下一轮起生效。
+        #   非法值直接 400，不静默回落，避免前端以为切了其实没切。
+        if body.profile_id:
+            try:
+                st["profile_id"] = config.load_personality(body.profile_id)
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e))
         try:
             log, S, src = chat_turn(st, text)
         except LLMUnavailableError as e:
@@ -238,15 +307,34 @@ def chat(body: ChatIn):
                 "state": _state_payload(st),
             }
         rm = st.get("recalled_memory")
+        # [045] 聊天记录随状态一并落盘（跨浏览器/跨设备拉取同一份文字历史）。
+        #   只记录成功轮次；失败轮次的兜底提示不入库，避免污染历史。
+        reply_text = str(log.get("llm_output", "")).strip()
+        msgs = st.setdefault("messages", [])
+        msgs.append({"role": "user", "content": text, "ts": time.time()})
+        msgs.append({"role": "assistant", "content": reply_text, "ts": time.time()})
         # [021.4] 每轮成功后落盘（原子写）。失败只告警，不影响本轮响应。
         if _PERSIST:
             session_store.save(body.session_id, st)
         return {
-            "reply": str(log.get("llm_output", "")).strip(),
+            "reply": reply_text,
             "w_PFC": float(log["w_PFC"]),
             "I_inhibit": float(log["I_inhibit"]),
             "e0": float(log["E_final"][0]),
+            # [041] 四维情绪 + 破防冷却 + 危险度 + 阈值
+            "e": [float(x) for x in log["E_final"]],
             "action": log.get("action"),
+            "express_cooldown": int(st.get("express_cooldown", 0)),
+            "danger_now": float(log.get("danger_now", 0.0)),
+            "profile_id": str(st.get("profile_id", config.PERSONALITY_DEFAULT)),
+            "profile_label": config.PERSONALITY_PROFILES.get(
+                st.get("profile_id", config.PERSONALITY_DEFAULT), {}).get("label", ""),
+            "thresholds": {
+                "inhibit_high": float(config.POLICY_THRESHOLD_INHIBIT_HIGH),
+                "inhibit_mid": float(config.POLICY_THRESHOLD_INHIBIT_MID),
+                "express_valence": float(config.POLICY_EXPRESS_VALENCE),
+                "express_inhibit": float(config.POLICY_EXPRESS_INHIBIT),
+            },
             "alpha_mode": float(log.get("alpha_mode", 0.0)),
             "threat_now": float(log.get("threat_now", 0.0)),
             "recall": _recall_text(rm, st),

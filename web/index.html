@@ -646,6 +646,29 @@ body.critical .mark{ animation: flicker 3.4s steps(1, end) infinite; }
 .api-actions button.primary:hover{ background:var(--clay-deep); color:#fff; }
 .api-actions button:disabled{ opacity:.5; cursor:default; }
 @media (max-width:640px){ .api-card{ padding:16px; } }
+/* [041] 性格选择 / 四维 / 破防冷却 */
+.profile-wrap{ display:flex; align-items:center; gap:7px; margin-right:6px; }
+.profile-wrap label{ font-size:10px; letter-spacing:.12em; color:var(--faint); }
+#profileSel{
+  font-family:var(--mono); font-size:10.5px; color:var(--ink-2);
+  background:rgba(255,255,255,.35); border:1px solid var(--line-soft);
+  border-radius:999px; padding:4px 9px; outline:none; cursor:pointer;
+}
+#profileSel:focus{ border-color:rgba(176,106,78,.45); }
+#profileHint{ font-size:9.5px; color:var(--faint); letter-spacing:.04em; }
+.vit-row.small.act-express .vit-num,
+.vit-row.small.act-express span:last-child{ color:#b5432f; font-weight:600; }
+body.breakdown .mark{
+  background:#b5432f !important;
+  animation:breakdownPulse 1.4s ease-out infinite;
+}
+body.breakdown .ring-fill{ stroke:#b5432f !important; }
+@keyframes breakdownPulse{
+  0%{ box-shadow:0 0 0 0 rgba(181,67,47,.55); }
+  70%{ box-shadow:0 0 0 14px rgba(181,67,47,0); }
+  100%{ box-shadow:0 0 0 0 rgba(181,67,47,0); }
+}
+#vitCooldownRow .vit-num, #vitCooldownRow span:last-child{ color:#5b6f86; }
 </style>
 </head>
 <body>
@@ -657,6 +680,10 @@ body.critical .mark{ animation: flicker 3.4s steps(1, end) infinite; }
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
       开启新对话
     </button>
+    <div class="side-session" style="margin:10px 0 4px;font-size:12px;color:#8a93a1;">
+      <label for="sessionSel" style="display:block;margin-bottom:4px;">后端会话（跨浏览器共享）</label>
+      <select id="sessionSel" style="width:100%;box-sizing:border-box;padding:6px 8px;border-radius:8px;border:1px solid #3a4250;background:#1d222b;color:#d7dde6;font-size:12px;"></select>
+    </div>
     <div class="side-search">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
       <input id="histSearch" type="text" placeholder="搜索对话" autocomplete="off" />
@@ -691,17 +718,32 @@ body.critical .mark{ animation: flicker 3.4s steps(1, end) infinite; }
           </div>
           <div class="vitals" id="vitals" role="status">
             <div class="vit-head"><span>内在状态</span><span class="vit-live">实时</span></div>
-            <div class="vit-row"><span class="vit-label">疲劳<em>w_PFC</em></span><span class="vit-num" id="vitPfc">0.18</span></div>
+            <div class="vit-row"><span class="vit-label">疲劳<em>w_PFC</em></span><span class="vit-num" id="vitPfc">0.00</span></div>
             <div class="vit-track"><i id="trkPfc"></i></div>
-            <div class="vit-row"><span class="vit-label">理智防线<em>I_inhibit</em></span><span class="vit-num" id="vitInh">0.92</span></div>
+            <div class="vit-row"><span class="vit-label">理智防线<em>I_inhibit</em></span><span class="vit-num" id="vitInh">0.00</span></div>
             <div class="vit-track"><i id="trkInh"></i></div>
-            <div class="vit-row"><span class="vit-label">情绪效价<em>e0</em></span><span class="vit-num" id="vitVal">+0.16</span></div>
+            <div class="vit-row"><span class="vit-label">情绪效价<em>e0</em></span><span class="vit-num" id="vitVal">+0.00</span></div>
             <div class="vit-track"><i id="trkVal"></i></div>
+            <div class="vit-row small"><span>唤醒 e1</span><span id="vitE1">+0.00</span></div>
+            <div class="vit-row small"><span>掌控 e2</span><span id="vitE2">+0.00</span></div>
+            <div class="vit-row small"><span>焦虑 e3</span><span id="vitE3">+0.00</span></div>
             <div class="vit-sep"></div>
+            <div class="vit-row small"><span>危险度 danger / MID</span><span id="vitDanger">0.00 / 0.20</span></div>
+            <div class="vit-row small" id="vitActionRow"><span>行动</span><span id="vitAction">task_first</span></div>
+            <div class="vit-row small" id="vitCooldownRow" style="display:none;"><span>破防冷却</span><span id="vitCooldown">0</span></div>
             <div class="vit-row small"><span>本轮 tokens</span><span id="vitTok">0</span></div>
             <div class="vit-row small" style="margin-top:6px;"><span>状态</span><span id="vitMood">平静</span></div>
           </div>
         </div>
+      </div>
+      <div class="profile-wrap">
+        <label for="profileSel">性格</label>
+        <select id="profileSel" aria-label="性格预设">
+          <option value="standard">标准型 standard</option>
+          <option value="sensitive">敏感型 sensitive</option>
+          <option value="gentle">温和型 gentle</option>
+        </select>
+        <span id="profileHint"></span>
       </div>
       <button class="demo-btn" id="demoBtn" data-run="0">
         <span class="demo-dot"></span>
@@ -790,7 +832,10 @@ const CONFIG = {
   endpoint: 'http://127.0.0.1:8000/chat',
   useBackend: true,
   timeoutMs: 30000,
-  sessionId: 'vesper-' + Math.random().toString(36).slice(2, 10),
+  /* [044] 真实会话 ID 由 bootstrap() 解析：
+     优先 URL ?session_id=，其次后端 /api/sessions 返回的默认值 owner_main。
+     在解析完成前留空，避免把随机 id 写进跨浏览器共享的后端存档。 */
+  sessionId: '',
 };
 
 /* ============================================================
@@ -813,6 +858,11 @@ const els = {
   newChatBtn: $('#newChatBtn'), menuBtn: $('#menuBtn'), scrim: $('#scrim'),
   brand: $('#brand'), mood: $('#mood'), ringFill: $('#ringFill'),
   vitPfc: $('#vitPfc'), vitInh: $('#vitInh'), vitVal: $('#vitVal'), vitTok: $('#vitTok'), vitMood: $('#vitMood'),
+  vitE1: $('#vitE1'), vitE2: $('#vitE2'), vitE3: $('#vitE3'),
+  vitDanger: $('#vitDanger'), vitAction: $('#vitAction'),
+  vitCooldownRow: $('#vitCooldownRow'), vitCooldown: $('#vitCooldown'),
+  profileSel: $('#profileSel'), profileHint: $('#profileHint'),
+  sessionSel: $('#sessionSel'),
   trkPfc: $('#trkPfc'), trkInh: $('#trkInh'), trkVal: $('#trkVal'),
   usage: $('#usage'), connDot: $('#connDot'), connText: $('#connText'),
 };
@@ -821,14 +871,25 @@ const els = {
    3. 全局状态
    ============================================================ */
 const S = {
-  wPFC: .18, inhibit: .92, valence: .16,
+  wPFC: 0, inhibit: 0, valence: 0,
+  e: [0, 0, 0, 0],
+  action: 'task_first', cooldown: 0, danger: 0,
+  profile: 'standard', mid: .20, high: .70, expressInh: .30, expressVal: -.50,
   tokens: 0, turns: 0,
   deepThink: false, webSearch: false,
   generating: false, abort: false,
   chatId: null,
   demoPhase: 'idle', // idle | run | broke | healing | done
 };
-const CALM = { wPFC: .18, inhibit: .92, valence: .16 };
+const PROFILE_KEY = 'vesper.profile.v1';
+const PROFILE_LABELS = { standard: '标准型', sensitive: '敏感型', gentle: '温和型' };
+/* [042] 全新会话按后端真值显示全 0（此前是设计稿遗留的演示值
+   wPFC .18 / inhibit .92 / valence .16，容易误读为初始疲劳和防线） */
+const CALM = {
+  wPFC: 0, inhibit: 0, valence: 0,
+  e: [0, 0, 0, 0],
+  action: 'task_first', cooldown: 0, danger: 0,
+};
 
 /* ============================================================
    4. 轻量 Markdown 渲染（零依赖）
@@ -934,6 +995,19 @@ function paintState(){
   els.trkVal.style.width = ((v + 1) / 2 * 100).toFixed(1) + '%';
   els.vitTok.textContent = S.tokens.toLocaleString();
   els.usage.textContent = `≈ ${S.tokens.toLocaleString()} tokens · ${S.turns} 轮`;
+
+  /* [041] 四维 / 危险度 / 行动 / 破防冷却 */
+  const e = Array.isArray(S.e) ? S.e : [v, 0, 0, 0];
+  els.vitE1.textContent = (e[1] >= 0 ? '+' : '') + Number(e[1] || 0).toFixed(2);
+  els.vitE2.textContent = (e[2] >= 0 ? '+' : '') + Number(e[2] || 0).toFixed(2);
+  els.vitE3.textContent = (e[3] >= 0 ? '+' : '') + Number(e[3] || 0).toFixed(2);
+  els.vitDanger.textContent = Number(S.danger || 0).toFixed(2) + ' / ' + Number(S.mid || 0).toFixed(2);
+  els.vitAction.textContent = S.action || 'task_first';
+  const express = S.action === 'express';
+  els.vitAction.parentElement.classList.toggle('act-express', express);
+  els.vitCooldownRow.style.display = (S.cooldown > 0) ? 'flex' : 'none';
+  if (S.cooldown > 0) els.vitCooldown.textContent = '剩余 ' + S.cooldown + ' 轮';
+  document.body.classList.toggle('breakdown', express);
 
   const mood = moodFor(f, inh, v);
   if (mood !== lastMood){
@@ -1198,6 +1272,9 @@ function normalizeRecall(r){
 function normalizeResponse(data){
   const num = (...xs) => { for (const x of xs){ const n = Number(x); if (Number.isFinite(n)) return n; } return undefined; };
   const st = data.state || data.status || data.emotion || {};
+  const eSrc = Array.isArray(data.e) ? data.e : (Array.isArray(st.e) ? st.e : null);
+  const e = eSrc ? eSrc.map((x) => Number(x) || 0) : null;
+  const th = data.thresholds || st.thresholds || {};
   return {
     reply: String(data.reply ?? data.answer ?? data.text ?? data.message ?? data.content ?? ''),
     reasoning: data.reasoning || data.think || data.thought || data.chain_of_thought || '',
@@ -1205,6 +1282,15 @@ function normalizeResponse(data){
     wPFC: num(data.w_PFC, data.wPFC, st.w_PFC, st.wPFC, st.fatigue),
     inhibit: num(data.I_inhibit, data.inhibit, st.I_inhibit, st.inhibit),
     valence: num(data.e0, data.valence, st.e0, st.valence),
+    e,
+    action: data.action ?? st.action,
+    cooldown: num(data.express_cooldown, st.express_cooldown),
+    danger: num(data.danger_now, st.danger_now),
+    profile: data.profile_id ?? st.profile_id,
+    mid: num(th.inhibit_mid),
+    high: num(th.inhibit_high),
+    expressInh: num(th.express_inhibit),
+    expressVal: num(th.express_valence),
     recall: normalizeRecall(data.recall ?? data.memory ?? data.echo),
     usage: num(data.usage?.total_tokens, data.tokens, data.usage),
   };
@@ -1219,6 +1305,7 @@ async function requestBackend(text){
       body: JSON.stringify({
         message: text, session_id: CONFIG.sessionId,
         deep_think: S.deepThink, web_search: S.webSearch,
+        profile_id: S.profile || 'standard',
       }),
       signal: ctrl.signal,
     });
@@ -1285,13 +1372,24 @@ function mockSources(q){
 }
 function mockReply(text){
   const codey = /代码|code|python|函数|csv|脚本|js|javascript/i.test(text);
+  const inh = Math.max(.02, S.inhibit - .02);
+  const cd = Math.max(0, (S.cooldown || 0) - 1);
+  let action = inh > .7 ? 'suppress' : (inh < .3 ? 'express' : 'task_first');
+  if (action === 'express' && cd > 0) action = inh >= .5 ? 'suppress' : 'task_first';
+  const nextCd = action === 'express' ? 10 : cd;
+  const val = Math.max(-.96, S.valence - .02);
   return {
     reply: codey ? CODE_REPLY : POOL_REPLIES[Math.floor(Math.random() * POOL_REPLIES.length)],
     reasoning: S.deepThink ? mockReasoning(text) : '',
     sources: S.webSearch ? mockSources(text) : null,
     wPFC: Math.min(.96, S.wPFC + .03),
-    inhibit: Math.max(.02, S.inhibit - .02),
-    valence: Math.max(-.96, S.valence - .02),
+    inhibit: inh,
+    valence: val,
+    e: [val, Math.min(1, .3 + Math.random() * .2), -.05 + Math.random() * .1, .1 + Math.random() * .1],
+    action,
+    cooldown: nextCd,
+    danger: Math.max(-1, Math.min(1, val * .7 + .1)),
+    profile: S.profile,
     recall: null,
   };
 }
@@ -1378,6 +1476,16 @@ async function sendMessage(text, opts = {}){
     inhibit: data.inhibit ?? S.inhibit,
     valence: data.valence ?? S.valence,
   };
+  /* [041] 四维 / 危险度 / 破防冷却 / 性格 */
+  if (Array.isArray(data.e) && data.e.length >= 4) S.e = data.e.map((x) => Number(x) || 0);
+  if (data.action) S.action = data.action;
+  if (Number.isFinite(data.cooldown)) S.cooldown = data.cooldown;
+  if (Number.isFinite(data.danger)) S.danger = data.danger;
+  if (data.profile){ S.profile = data.profile; if (els.profileSel) els.profileSel.value = data.profile; }
+  if (Number.isFinite(data.mid)) S.mid = data.mid;
+  if (Number.isFinite(data.high)) S.high = data.high;
+  if (Number.isFinite(data.expressInh)) S.expressInh = data.expressInh;
+  if (Number.isFinite(data.expressVal)) S.expressVal = data.expressVal;
   animateStateTo(target, 1600);
 
   /* tokens 估算 */
@@ -1469,11 +1577,26 @@ function resetAll(keepPhase){
   if (CONFIG.useBackend){
     CONFIG.sessionId = 'vesper-' + Math.random().toString(36).slice(2, 10);
   }
+  /* [044] 新建对话生成新会话 id 后，同步下拉框选择。 */
+  if (els.sessionSel){
+    const opt = document.createElement('option');
+    opt.value = CONFIG.sessionId; opt.textContent = CONFIG.sessionId + ' · 新会话';
+    els.sessionSel.appendChild(opt);
+    els.sessionSel.value = CONFIG.sessionId;
+  }
   S.chatId = null;
   S.tokens = 0; S.turns = 0;
   Object.assign(S, CALM);
   paintState();
+  showEmptyState();
+  if (!keepPhase){ S.demoPhase = 'idle'; setDemoLabel('演示 · 连骂八轮', false); }
+  renderHistory();
+}
+
+/* [045] 空状态面板（重置会话与远端无历史时共用） */
+function showEmptyState(){
   els.thread.innerHTML = '';
+  els.empty = null;
   const empty = document.createElement('div');
   empty.className = 'empty'; empty.id = 'empty';
   empty.innerHTML = `<div class="empty-greet">${greeting()}，<em>梅拉</em>。</div>
@@ -1486,8 +1609,36 @@ function resetAll(keepPhase){
     </div>`;
   els.thread.appendChild(empty);
   els.empty = empty;
-  if (!keepPhase){ S.demoPhase = 'idle'; setDemoLabel('演示 · 连骂八轮', false); }
-  renderHistory();
+}
+
+/* [045] 渲染后端返回的聊天记录（跨浏览器/跨设备的同一份文字历史） */
+function renderRemoteHistory(messages){
+  const list = Array.isArray(messages) ? messages : [];
+  els.thread.innerHTML = '';
+  els.empty = null;
+  if (!list.length){ showEmptyState(); return 0; }
+  list.forEach((m, idx) => {
+    if (m.role === 'user'){ addUserMsg(m.content || ''); return; }
+    const root = aiShell();
+    const a = addAnswer(root);
+    a.innerHTML = renderMD(m.content || '……');
+    addActions(root, () => m.content, idx === list.length - 1);
+  });
+  scrollToEnd(false);
+  return list.length;
+}
+
+async function loadRemoteHistory(sid){
+  const base = CONFIG.endpoint.replace(/\/chat$/, '');
+  try {
+    const r = await fetch(base + '/api/history?session_id=' + encodeURIComponent(sid),
+                          { cache: 'no-store' });
+    if (!r.ok) return null;
+    const d = await r.json();
+    const n = renderRemoteHistory(d.messages || []);
+    if (n) S.turns = Math.ceil(n / 2);
+    return n;
+  } catch (e) { return null; }
 }
 
 /* ============================================================
@@ -1592,10 +1743,22 @@ function loadChat(chat){
     }
     CONFIG.sessionId = chat.sessionId;
   }
+  /* [044] 切回历史对话时同步下拉框选择。 */
+  if (els.sessionSel){
+    if (!Array.from(els.sessionSel.options).some((o) => o.value === CONFIG.sessionId)){
+      const opt = document.createElement('option');
+      opt.value = CONFIG.sessionId; opt.textContent = CONFIG.sessionId;
+      els.sessionSel.appendChild(opt);
+    }
+    els.sessionSel.value = CONFIG.sessionId;
+  }
   const st = chat.state || CALM;
   Object.assign(S, { wPFC: st.wPFC, inhibit: st.inhibit, valence: st.valence });
   S.tokens = 0; S.turns = Math.ceil(chat.messages.length / 2);
   paintState();
+  /* [042] 切回历史对话时以后端 /state 为准刷新（含四维与行动）；
+     后端离线时保留 chat.state 里的值。 */
+  if (CONFIG.useBackend) syncServerState();
   els.thread.innerHTML = '';
   els.empty = null;
   chat.messages.forEach((m, idx) => {
@@ -1647,6 +1810,123 @@ setConn(CONFIG.useBackend ? 'online' : 'mock');
 paintState();
 renderHistory();
 refreshSendBtn();
+
+/* [041] 性格预设：本地记住选择，下一轮请求带上 profile_id */
+try { S.profile = localStorage.getItem(PROFILE_KEY) || 'standard'; } catch (e) {}
+if (els.profileSel){
+  els.profileSel.value = S.profile;
+  els.profileHint.textContent = PROFILE_LABELS[S.profile] || S.profile;
+  els.profileSel.addEventListener('change', () => {
+    S.profile = els.profileSel.value;
+    try { localStorage.setItem(PROFILE_KEY, S.profile); } catch (e) {}
+    els.profileHint.textContent = (PROFILE_LABELS[S.profile] || S.profile) + ' · 下一轮生效';
+  });
+}
+async function syncServerState(){
+  try {
+    const base = CONFIG.endpoint.replace(/\/chat$/, '');
+    const r = await fetch(base + '/state?session_id=' + encodeURIComponent(CONFIG.sessionId));
+    if (!r.ok) return;
+    const d = await r.json();
+    if (d.profile_id){ S.profile = d.profile_id; if (els.profileSel) els.profileSel.value = d.profile_id; }
+    /* [042] 服务端现在无轮次时也返回这三项，一律以服务端为准覆盖本地，
+       不再"只在有值时才覆盖"，避免残留占位值。 */
+    if (Number.isFinite(d.w_PFC)) S.wPFC = d.w_PFC;
+    if (Number.isFinite(d.I_inhibit)) S.inhibit = d.I_inhibit;
+    if (Number.isFinite(d.e0)) S.valence = d.e0;
+    if (d.action) S.action = d.action;
+    if (Number.isFinite(d.danger_now)) S.danger = d.danger_now;
+    if (Array.isArray(d.e) && d.e.length >= 4) S.e = d.e.map((x) => Number(x) || 0);
+    if (Number.isFinite(d.express_cooldown)) S.cooldown = d.express_cooldown;
+    if (d.thresholds){
+      if (Number.isFinite(d.thresholds.inhibit_mid)) S.mid = d.thresholds.inhibit_mid;
+      if (Number.isFinite(d.thresholds.inhibit_high)) S.high = d.thresholds.inhibit_high;
+      if (Number.isFinite(d.thresholds.express_inhibit)) S.expressInh = d.thresholds.express_inhibit;
+      if (Number.isFinite(d.thresholds.express_valence)) S.expressVal = d.thresholds.express_valence;
+    }
+    if (els.profileHint) els.profileHint.textContent = PROFILE_LABELS[S.profile] || S.profile;
+    paintState();
+  } catch (e) { /* 后端离线时保持本地状态 */ }
+}
+
+/* [044] 启动时解析会话 ID：URL ?session_id= 优先，否则用后端默认 owner_main。
+   跨浏览器共享同一会话，换浏览器也能续上疲劳/记忆。 */
+async function bootstrapSession(){
+  const base = CONFIG.endpoint.replace(/\/chat$/, '');
+  const urlSid = new URLSearchParams(location.search).get('session_id');
+  let defaultSid = 'owner_main';
+  try {
+    const r = await fetch(base + '/api/sessions', { cache: 'no-store' });
+    if (r.ok){
+      const d = await r.json();
+      defaultSid = d.default || defaultSid;
+      populateSessionDropdown(d.sessions || [], urlSid || defaultSid);
+    }
+  } catch (e) { /* 离线时回落硬编码默认 */ }
+  CONFIG.sessionId = urlSid || defaultSid;
+  /* 把当前活动对话绑定到解析出的 sessionId，确保后续对话写入同一后端存档。 */
+  const cur = currentChat();
+  if (cur){
+    const chats = loadChats().map((c) => c.id === cur.id ? { ...c, sessionId: CONFIG.sessionId } : c);
+    saveChats(chats);
+  }
+  els.sessionSel.value = CONFIG.sessionId;
+  if (CONFIG.useBackend) await syncServerState();
+  /* [045] 拉取后端聊天记录：换浏览器/换设备也能看到同一份文字历史。
+     兼容：后端无记录但本地有该会话的对话 → 仍显示本地，不空白。 */
+  const n = await loadRemoteHistory(CONFIG.sessionId);
+  if (!n){
+    const local = loadChats().find(
+      (c) => c.sessionId === CONFIG.sessionId && (c.messages || []).length);
+    if (local){ S.chatId = local.id; renderRemoteHistory(local.messages); }
+  }
+  els.input.disabled = false;
+  refreshSendBtn();
+}
+
+function populateSessionDropdown(items, current){
+  const sel = els.sessionSel;
+  sel.innerHTML = '';
+  const seen = new Set();
+  const opts = [{ session_id: 'owner_main', label: '默认主会话 owner_main' }];
+  for (const it of items){
+    if (seen.has(it.session_id)) continue;
+    seen.add(it.session_id);
+    const t = new Date(it.mtime * 1000);
+    opts.push({ session_id: it.session_id,
+      label: it.session_id + ' · ' + t.toLocaleString() });
+  }
+  for (const o of opts){
+    const opt = document.createElement('option');
+    opt.value = o.session_id; opt.textContent = o.label;
+    sel.appendChild(opt);
+  }
+  if (current && Array.from(sel.options).every((o) => o.value !== current)){
+    const opt = document.createElement('option');
+    opt.value = current; opt.textContent = current;
+    sel.appendChild(opt);
+  }
+  sel.value = current;
+}
+
+els.sessionSel.addEventListener('change', async () => {
+  CONFIG.sessionId = els.sessionSel.value;
+  S.chatId = null;
+  const cur = currentChat();
+  if (cur){
+    const chats = loadChats().map((c) => c.id === cur.id ? { ...c, sessionId: CONFIG.sessionId } : c);
+    saveChats(chats);
+  }
+  if (CONFIG.useBackend){
+    await syncServerState();
+    const n = await loadRemoteHistory(CONFIG.sessionId);
+    if (!n) showEmptyState();
+  }
+});
+
+/* 启动时禁用输入，避免 bootstrap 完成前发出空 session_id 的对话 */
+els.input.disabled = true;
+bootstrapSession();
 
 /* 入场动画只在动画时钟真实走动时启用：
    双 rAF 后挂 fx-on，250ms 后探测——若所有动画 currentTime 仍为 0

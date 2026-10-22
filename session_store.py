@@ -180,7 +180,26 @@ def dump_state(st):
         "raw_log": raw_log,
         "packages": [_pkg_to_dict(p) for p in st["archiver"].get_packages()],
         "events": [_event_to_dict(e) for e in st["memory_graph"].get_all()],
+        # [045] 聊天记录（用户输入 + AI 回复）随会话落盘，供跨浏览器/跨设备
+        #   拉取同一份文字历史。旧文件无此字段 → 空列表。
+        "messages": _dump_messages(st.get("messages")),
     }
+
+
+def _dump_messages(msgs):
+    """只保留渲染必要字段，避免把临时对象写进存档。"""
+    out = []
+    for m in (msgs or []):
+        if not isinstance(m, dict):
+            continue
+        role = str(m.get("role", "")) or "assistant"
+        content = str(m.get("content", ""))
+        try:
+            ts = float(m.get("ts", 0.0))
+        except Exception:
+            ts = 0.0
+        out.append({"role": role, "content": content, "ts": ts})
+    return out
 
 
 def load_state(data, warn=print):
@@ -197,6 +216,8 @@ def load_state(data, warn=print):
         st["profile_id"] = str(data.get("profile_id", "standard") or "standard")
         # [039] 旧会话无 express_cooldown → 0
         st["express_cooldown"] = max(0, int(data.get("express_cooldown", 0) or 0))
+        # [045] 旧会话无 messages → 空列表（不因缺字段而拒绝载入）
+        st["messages"] = _dump_messages(data.get("messages"))
         for key in ("E_prev", "B", "M_prev"):
             vec = _b64_to_vec(data.get(key))
             if vec is not None:

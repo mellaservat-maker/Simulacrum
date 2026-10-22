@@ -17,7 +17,8 @@ echo  This window IS the backend. Close it to stop the service.
 echo  Browser opens http://127.0.0.1:8000/ automatically.
 echo ============================================================
 echo.
-d:/aiqg/venv/Scripts/python.exe -m uvicorn server_api:app --host 127.0.0.1 --port 8000
+rem [045] listen on 0.0.0.0 so phones in the same LAN can connect
+d:/aiqg/venv/Scripts/python.exe -m uvicorn server_api:app --host 0.0.0.0 --port 8000
 echo.
 echo Backend stopped. Press any key to close.
 pause >nul

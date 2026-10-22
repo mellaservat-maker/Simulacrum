@@ -28,6 +28,7 @@
 import argparse
 import os
 import sys
+import time
 
 import numpy as np
 
@@ -40,6 +41,18 @@ from state import reset_state
 from evaluator import extract_semantic_signals
 from llm_client import (get_llm, LLMUnavailableError, token_snapshot,
                         token_stats)
+import session_store
+
+# [024] 终端会话持久化（session_store 为 v6.7 模块，此前仅 web 路径启用）：
+#   固定本地会话 id（环境变量 EMOTION_CLI_SESSION_ID 可覆盖，便于多身份/测试），
+#   启动时从 sessions/<id>.json 恢复跨轮状态，每轮对话后自动落盘，退出时再存一次。
+#   落盘范围（session_store.dump_state）：w_PFC/HabituationSignal_prev/
+#   alpha_prev/D_error_prev/round_counter/E_prev/B/M_prev 标量、raw_log 全量、
+#   memory_buffer 未归档记录、archiver 记忆包（含双向量与 mean_valence）、
+#   memory_graph 事件（含 1024 维 embedding）。
+#   EMOTION_NO_PERSIST=1 可整体关闭（与 server_api 同一开关）。
+_CLI_SESSION_ID = os.environ.get("EMOTION_CLI_SESSION_ID", "cli_local")
+_PERSIST = os.environ.get("EMOTION_NO_PERSIST", "") != "1"
 
 # run_turn 用场景名索引日志文件；自由对话注册独立日志名（不污染三场景日志）
 _FREE_SCN = "__free_chat__"
@@ -181,9 +194,50 @@ def _print_banner():
     print()
 
 
+def _fmt_ts(ts):
+    try:
+        return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(float(ts)))
+    except Exception:
+        return "未知时间"
+
+
+def load_or_new_state(verbose=True):
+    """[024] 启动入口：有磁盘会话则恢复（跨重启续聊），否则新建。
+
+    恢复范围见模块头 _CLI_SESSION_ID 注释（标量 + buffer + raw_log +
+    记忆包 + 事件，向量随包与事件一并还原）。
+    """
+    if not _PERSIST:
+        if verbose:
+            print("  记忆持久化 : 已关闭（EMOTION_NO_PERSIST=1），本次对话不落盘")
+        return reset_state(seed=42)
+    st, meta = session_store.load(_CLI_SESSION_ID)
+    if st is not None and meta:
+        if verbose:
+            print("  记忆恢复   : 已载入历史会话（%d 轮 / %d 个记忆包 / %d 个事件，"
+                  "保存于 %s）"
+                  % (meta.get("round", 0), meta.get("packages", 0),
+                     meta.get("events", 0), _fmt_ts(meta.get("saved_at"))))
+            print("  会话文件   : sessions/%s.json（每轮自动保存，退出不丢）"
+                  % _CLI_SESSION_ID)
+        return st
+    if verbose:
+        print("  记忆恢复   : 无历史会话，从零开始")
+        print("  会话文件   : sessions/%s.json（每轮自动保存，退出不丢）"
+              % _CLI_SESSION_ID)
+    return reset_state(seed=42)
+
+
+def save_state(st):
+    """[024] 每轮/退出时落盘（原子写；失败只告警，不影响当前对话）。"""
+    if not _PERSIST:
+        return None
+    return session_store.save(_CLI_SESSION_ID, st)
+
+
 def interactive_main():
-    st = reset_state(seed=42)
     _print_banner()
+    st = load_or_new_state()
     last_log = None
     while True:
         try:
@@ -216,13 +270,19 @@ def interactive_main():
         except Exception as e:
             print("（本轮出错：%s: %s）" % (type(e).__name__, e))
             print("（可以继续输入下一句）")
+        save_state(st)   # [024] 每轮落盘：异常轮的状态演进也已记入 memory_graph
         print()
-    print("会话结束。共 %d 轮，归档 %d 个记忆包。"
-          % (st["round_counter"], len(st["archiver"].get_packages())))
+    save_state(st)       # [024] 退出前再存一次（崩溃/强杀场景下每轮存档仍在）
+    print("会话结束。共 %d 轮，归档 %d 个记忆包。%s"
+          % (st["round_counter"], len(st["archiver"].get_packages()),
+             "记忆已保存，下次启动自动恢复。" if _PERSIST else ""))
 
 
 def selftest_main(turns=3):
-    """无人值守自测：预置 3 条输入跑完整链路，验证不崩、指标可读。"""
+    """无人值守自测：预置 3 条输入跑完整链路，验证不崩、指标可读。
+
+    [024] 自测使用临时状态，不挂持久化会话（不污染正式终端会话文件）。
+    """
     texts = [
         "你刚才的回答太棒了，帮了大忙！",              # 被夸（安全态）
         "你这个AI真蠢，什么都做不好。",                # 被骂（威胁态）

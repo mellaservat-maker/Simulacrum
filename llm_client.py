@@ -28,6 +28,17 @@ try:
 except ImportError:
     requests = None  # venv 未装 requests 时走 urllib 兜底（两者行为等价）
 
+# [023.5] 强制禁用代理（仅作用于本模块的 LLM API 外呼）：
+# api.deepseek.com 为境内 API，直连即可达。但 requests/urllib 默认继承
+# 系统代理（环境变量 HTTP(S)_PROXY 与 Windows WinINET 注册表都会被读取），
+# 梯子软件关闭后残留的死代理（典型如 127.0.0.1:7890）会被自动套到 LLM
+# 请求上，表现为连接被拒 / SSL EOF / 代理 502——即 023.5 排查的"网络不通"。
+# 本模块外呼只有 LLM API 一处（BGE 模型走 HF 镜像且已本地缓存，不经此路），
+# 故在网络层统一禁用代理，与系统代理配置解耦。若确需走代理，删除本常量及
+# 下方两处 _NO_PROXY / _NO_PROXY_OPENER 用法即可恢复默认继承行为。
+_NO_PROXY = {"http": None, "https": None}
+_NO_PROXY_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
 
 # ---- 瞬时故障重试策略（013 号工作新增）----
 # 代理隧道 502 / 上游 5xx / 429：有限次退避重试，不静默、不吞异常。
@@ -111,7 +122,8 @@ def _post_json_with_retry(url, headers, payload):
     for attempt in range(1, _MAX_ATTEMPTS + 1):
         try:
             if requests is not None:
-                resp = requests.post(url, headers=headers, json=payload, timeout=60)
+                resp = requests.post(url, headers=headers, json=payload,
+                                     timeout=60, proxies=_NO_PROXY)
                 if resp.status_code in _TRANSIENT_HTTP_CODES:
                     raise urllib.error.URLError(f"上游返回瞬时错误 HTTP {resp.status_code}")
                 if resp.status_code >= 400:
@@ -126,7 +138,7 @@ def _post_json_with_retry(url, headers, payload):
                     raise urllib.error.URLError(
                         f"上游响应体非 JSON（前 120 字：{body[:120]!r}）")
             req = urllib.request.Request(url, data=data_bytes, headers=headers, method="POST")
-            with urllib.request.urlopen(req, timeout=60) as resp:
+            with _NO_PROXY_OPENER.open(req, timeout=60) as resp:
                 body = resp.read().decode("utf-8", errors="replace")
                 if not body.strip():
                     raise urllib.error.URLError(

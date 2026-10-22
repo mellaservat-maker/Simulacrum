@@ -305,9 +305,18 @@ def run_scenario(scenario, feature_mode="fixture"):
     action = policy_minimal(E_final, I_inhibit, fx["event_severity"])
 
     # 状态翻译 + prompt + LLM
-    monologue = state_to_prompt(E_final, I_inhibit, M_text, HistoricalResidual, HabituationSignal)
-    prompt = build_prompt(monologue, fx["input"])
+    # [023] Action 闭环（清单问题1）：action 进 Prompt——state_translator
+    #   输出规则第 6 条 + prompt_builder 硬指令位，LLM 不再对 action 无感。
+    monologue = state_to_prompt(E_final, I_inhibit, M_text, HistoricalResidual, HabituationSignal, action)
+    prompt = build_prompt(monologue, fx["input"], action)
     llm_output = get_llm().generate(prompt)
+
+    # [023] Action 闭环后处理：suppress 暴走护栏——LLM 无视"20 字"指令时，
+    #   超过 30 字强行截断并加省略号（宁短勿长：suppress 的语义就是收着）。
+    if action == "suppress" and len(llm_output) > 30:
+        llm_output = llm_output[:30] + "……"
+        print("[pipeline] suppress 护栏触发：输出超过 30 字，已截断加……",
+              file=sys.stderr)
 
     # 回写识海（5 字段，5.5.14）
     event.event_severity = fx["event_severity"]
@@ -506,9 +515,18 @@ def run_turn(state, scenario, feature_mode="fixture"):
     action = policy_minimal(E_final, I_inhibit, fx["event_severity"])
 
     # 状态翻译 + prompt + LLM
-    monologue = state_to_prompt(E_final, I_inhibit, M_text, HistoricalResidual, HabituationSignal)
-    prompt = build_prompt(monologue, fx["input"])
+    # [023] Action 闭环（清单问题1）：action 进 Prompt——state_translator
+    #   输出规则第 6 条 + prompt_builder 硬指令位，LLM 不再对 action 无感。
+    monologue = state_to_prompt(E_final, I_inhibit, M_text, HistoricalResidual, HabituationSignal, action)
+    prompt = build_prompt(monologue, fx["input"], action)
     llm_output = get_llm().generate(prompt)
+
+    # [023] Action 闭环后处理：suppress 暴走护栏——LLM 无视"20 字"指令时，
+    #   超过 30 字强行截断并加省略号（宁短勿长：suppress 的语义就是收着）。
+    if action == "suppress" and len(llm_output) > 30:
+        llm_output = llm_output[:30] + "……"
+        print("[pipeline] suppress 护栏触发：输出超过 30 字，已截断加……",
+              file=sys.stderr)
 
     # 回写识海（5 字段，5.5.14）
     event.event_severity = fx["event_severity"]

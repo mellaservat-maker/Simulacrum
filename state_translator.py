@@ -1,6 +1,8 @@
 # ============================================================
 # state_translator.py · V4.2 · 模块11 状态翻译
 # 规格：5.5.13
+# [023] Action 闭环（清单问题1）：policy_minimal 算出的 action 必须
+#   进入 Prompt——旧版 action 只落在 log 里，LLM 完全没听话。
 # ============================================================
 
 from config import (
@@ -10,8 +12,25 @@ from config import (
     PROMPT_HABITUATION_THRESHOLD,
 )
 
+# [023] 行动策略强指令表（与 policy.py 的优先级对应：
+#   ask_clarify > suppress > reappraise > express > task_first）。
+#   task_first 无附加指令——默认行为不变，旧探针/CLI 输出不受影响。
+ACTION_DIRECTIVES = {
+    "suppress": "强制要求：保持极简回复，字数不超过 20 字，禁止解释和反问。",
+    "express": "允许展现第一人称情绪，允许句子碎片化。",
+    "reappraise": "回复中必须包含重新思考、确认含义的措辞。",
+    "ask_clarify": "必须提出一个问题。",
+    "task_first": None,
+}
 
-def state_to_prompt(E_final, I_inhibit, M_text, HistoricalResidual, HabituationSignal):
+
+def action_directive(action):
+    """取 action 对应的强指令文本；task_first/未知 action 返回 None。"""
+    return ACTION_DIRECTIVES.get(action)
+
+
+def state_to_prompt(E_final, I_inhibit, M_text, HistoricalResidual, HabituationSignal,
+                    action="task_first"):
     # 感受（自然语言，不带数字）
     if E_final[0] < PROMPT_VALENCE_THRESHOLD:
         feeling_text = "有点被冒犯，心里不太舒服"
@@ -38,15 +57,22 @@ def state_to_prompt(E_final, I_inhibit, M_text, HistoricalResidual, HabituationS
     else:
         memory_text = "脑子里没什么特别的念头"
 
+    # [023] 行动策略指令：嵌入输出规则（软引导，与 prompt_builder 的
+    #   硬指令位形成双重保险——清单问题1 的病灶是 LLM 无视单点指令）
+    _rules = """【输出规则（必须严格遵守）】
+1. 直接回应用户，用第一人称说话。
+2. 禁止描述自己的内心状态。禁止使用括号、旁白、内心独白。
+3. 禁止提及任何数字、分数、参数名。
+4. 你的状态应当自然体现在语气、长短、用词上，而不是被说出来。
+5. 若"自控"为克制状态，回应要短、要收着；若"感受"为积极状态，回应可以稍放开。"""
+    _directive = action_directive(action)
+    if _directive:
+        _rules += f"\n6. 行动策略[{action}]：{_directive}"
+
     return f"""【你此刻的状态（仅供你参考，不要说出口）】
 - 感受：{feeling_text}
 - 自控：{control_text}
 - 熟悉度：{familiarity_text}
 - 隐约的回忆：{memory_text}
 
-【输出规则（必须严格遵守）】
-1. 直接回应用户，用第一人称说话。
-2. 禁止描述自己的内心状态。禁止使用括号、旁白、内心独白。
-3. 禁止提及任何数字、分数、参数名。
-4. 你的状态应当自然体现在语气、长短、用词上，而不是被说出来。
-5. 若"自控"为克制状态，回应要短、要收着；若"感受"为积极状态，回应可以稍放开。"""
+{_rules}"""

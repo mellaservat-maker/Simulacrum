@@ -6,7 +6,7 @@
 
 import numpy as np
 
-from config import DANGER_KEYWORDS, POSITIVE_WORDS, NEGATIVE_WORDS
+import config
 
 
 def safe_cosine(a, b):
@@ -22,11 +22,11 @@ def punctuation_heuristic(raw_text):
 
 
 def pos_count(raw_text):
-    return sum(raw_text.count(w) for w in POSITIVE_WORDS)
+    return sum(raw_text.count(w) for w in config.POSITIVE_WORDS)
 
 
 def neg_count(raw_text):
-    return sum(raw_text.count(w) for w in NEGATIVE_WORDS)
+    return sum(raw_text.count(w) for w in config.NEGATIVE_WORDS)
 
 
 def emotion_polarity(x_fast_1):
@@ -54,7 +54,7 @@ def task_relevance(current_event):
 def encode(event, M_prev, HabituationSignal_prev, B, memory_graph):
     raw_text = event.raw_text
 
-    x_fast_0 = 1.0 if any(kw in raw_text for kw in DANGER_KEYWORDS) else 0.0
+    x_fast_0 = 1.0 if any(kw in raw_text for kw in config.DANGER_KEYWORDS) else 0.0
     x_fast_1 = (neg_count(raw_text) - pos_count(raw_text)) / (
         pos_count(raw_text) + neg_count(raw_text) + 1e-6
     )

@@ -5,7 +5,7 @@
 
 import numpy as np
 
-from config import w_f, b_f, THETA_FAST
+import config
 
 
 def sigmoid(z):
@@ -14,7 +14,7 @@ def sigmoid(z):
 
 def run_fast_path(x_fast, B):
     B = np.array(B, dtype=float)
-    D_fast = float(sigmoid(w_f @ x_fast + b_f))
-    if D_fast > THETA_FAST:
+    D_fast = float(sigmoid(config.w_f @ x_fast + config.b_f))
+    if D_fast > config.THETA_FAST:
         B[1] = np.clip(B[1] + 0.3, 0.0, 1.0)
     return D_fast, B

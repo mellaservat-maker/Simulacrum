@@ -5,14 +5,14 @@
 
 import numpy as np
 
-from config import LAMBDA, C_INIT, B_INIT
+import config
 
 
 def run_emotion(E_prev, released_impact, B):
     E_raw = np.clip(
-        LAMBDA * E_prev
+        config.LAMBDA * E_prev
         + released_impact
-        + C_INIT @ (B - B_INIT),
+        + config.C_INIT @ (B - config.B_INIT),
         -1.0, 1.0,
     )
     return E_raw

@@ -51,6 +51,15 @@ class MemoryPackage:
     #   旧包（无 valence 记录）记 None —— 读取侧对 None 不过滤（无信息不惩罚）。
     mean_valence: float = None
 
+    # [029] 包级危险度聚合（写入侧原料，供后续 HR 反推与去重口径使用）：
+    #   n_rounds   包内轮数（含全部记录）
+    #   mean_danger 包内各轮 danger_score 均值（无信息 → None）
+    #   max_danger  包内各轮 danger_score 最大值（无信息 → None）
+    #   旧包缺这些字段时按默认值读取，读取侧不得因此改判。
+    n_rounds: int = 0
+    mean_danger: float = None
+    max_danger: float = None
+
     # 叙事层（AI 读，分标题）
     narrative_cause: str = ""
     narrative_trigger: str = ""

@@ -9,7 +9,7 @@ import json
 
 import numpy as np
 
-from config import c, W_MAX
+from config import c, W_MAX, W_DANGER, THETA_ERROR
 
 LOGS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs")
 
@@ -56,6 +56,9 @@ def test_clip_bounds():
         assert 0.0 <= log["release_rate"] <= 0.9
         assert 0.1 <= log["B_xg"] <= 1.0
         assert 0.0 <= log["S_E"] <= 1.0
-        assert 0.0 <= log["D_error"] <= 0.7
+        # [033] 当前公式下 D_error ∈ [0, (1-THETA_ERROR)+W_DANGER*(1-DANGER_NEUTRAL)]。
+        # 但 logs/ 里存有 032 时期（尚无高门）的历史记录，可为负、上界也更高；
+        # 这里按两代公式的并集校验：[-W_DANGER, (1-THETA_ERROR)+W_DANGER]。
+        assert -W_DANGER <= log["D_error"] <= (1.0 - THETA_ERROR) + W_DANGER
         assert 0.0 <= log["w_PFC"] <= W_MAX
         assert_no_nan_inf(log)

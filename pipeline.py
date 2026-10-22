@@ -12,11 +12,7 @@ import time
 
 import numpy as np
 
-from config import (m, MEMORY_WRITE_ENABLED, MEMORY_READ_ENABLED,
-                    RECALL_MATCH_ENABLED, TAU_FLOOR, PACKAGE_EMBEDDER,
-                    W_SEM, W_CON, W_SEV, SEV_NEUTRAL,
-                    POLARITY_FILTER_ENABLED, THETA_RAGE, THETA_POS,
-                    THETA_MILD, LAMBDA_POL)
+import config
 from state import reset_state
 from fast_path import run_fast_path
 from slow_path import run_slow_path
@@ -25,7 +21,7 @@ from emotion import run_emotion
 from intercept import run_intercept, run_recall_intercept, update_threat_mode
 from policy import policy_minimal
 from xinguang import update_xinguang_budget
-from hippocampal_evaluator import evaluate as hippocampal_evaluate
+from memory_gateway import recall as memory_recall
 from event_parser import parse as event_parse
 from feature_encoder import encode as feature_encode
 from state_translator import state_to_prompt
@@ -46,7 +42,7 @@ LOG_FILES = {
 
 # [017.5 T31] 包级匹配嵌入器：与 event_parser/archiver/decompressor 同款
 #   （embedder 实例缓存保证全系统共用一个 BGE 模型）
-_pkg_embedder = get_embedder(PACKAGE_EMBEDDER)
+_pkg_embedder = get_embedder(config.PACKAGE_EMBEDDER)
 
 
 def _cos(a, b) -> float:
@@ -90,8 +86,11 @@ def compute_danger_score(S_valence, V, event_severity):
     sev = float(event_severity)
     sem = -sv
     con = v0 - v1
-    sev_gate = max(0.0, sev - SEV_NEUTRAL) * (1.0 - max(0.0, sv))
-    return float(np.clip(W_SEM * sem + W_CON * con + W_SEV * sev_gate,
+    sev_gate = max(0.0, sev - config.SEV_NEUTRAL) * (1.0 - max(0.0, sv))
+    # [031] 性格整体刻度：先乘三项和再 clip，保证危险度与阈值的关系可控
+    return float(np.clip(config.DANGER_GAIN
+                         * (config.W_SEM * sem + config.W_CON * con
+                            + config.W_SEV * sev_gate),
                          -1.0, 1.0))
 
 
@@ -124,7 +123,7 @@ def _recall_match(st, packages, input_text, current_round, now_valence=None):
       旧包 mean_valence=None（无极性信息）：不过滤。
       无带嵌入的包 → 退回 latest 旧路径（不静默）。
     """
-    if not RECALL_MATCH_ENABLED:
+    if not config.RECALL_MATCH_ENABLED:
         return st["decompressor"].for_emotion_evaluator(packages[-1])
     try:
         now_vec = _pkg_embedder.encode(input_text)
@@ -149,13 +148,13 @@ def _recall_match(st, packages, input_text, current_round, now_valence=None):
         #   明明含骂轮——被骂早期语料里唯一的包正是这种，硬滤导致无召回、
         #   B2「暴怒时被放大」失败。混合包的存活可能必须保留到轮级。）
         sim_eff, pen = sim, 0.0
-        if POLARITY_FILTER_ENABLED and now_valence is not None:
+        if config.POLARITY_FILTER_ENABLED and now_valence is not None:
             pkg_pv = getattr(pkg, "mean_valence", None)
             if pkg_pv is not None:
                 nv = float(now_valence)
                 pvv = float(pkg_pv)
-                if nv < -THETA_MILD and pvv > 0.0:
-                    pen = LAMBDA_POL * pvv * (-nv)   # 威胁区（含暴怒区）软惩罚
+                if nv < -config.THETA_MILD and pvv > 0.0:
+                    pen = config.LAMBDA_POL * pvv * (-nv)   # 威胁区（含暴怒区）软惩罚
                     sim_eff = sim * (1.0 - min(1.0, pen))
         if sim_eff > best_sim:
             best, best_sim = pkg, sim_eff
@@ -164,7 +163,7 @@ def _recall_match(st, packages, input_text, current_round, now_valence=None):
         return st["decompressor"].for_emotion_evaluator(packages[-1])
     if best is None:
         return None
-    if best_sim < TAU_FLOOR:
+    if best_sim < config.TAU_FLOOR:
         return None
     recalled = st["decompressor"].for_emotion_evaluator_matched(
         best, now_vec, now_valence=now_valence)
@@ -187,6 +186,11 @@ def run_scenario(scenario, feature_mode="fixture"):
     fx = get_fixture(scenario)
     st = reset_state(seed=42)
 
+    # [039] 破防冷却：轮初先读旧值、再递减；旧值用于本轮判定，
+    #   使 express 触发后置 10 恰好封住接下来 10 轮（第 11 轮可再次破防）。
+    express_cooldown_before = int(st.get("express_cooldown", 0))
+    st["express_cooldown"] = max(0, express_cooldown_before - 1)
+
     now = time.time()
 
     if feature_mode == "fixture":
@@ -219,14 +223,6 @@ def run_scenario(scenario, feature_mode="fixture"):
     B = st["B"]
     B_xg = update_xinguang_budget(B[0], B[1])
 
-    # 海马体评估
-    hippo = hippocampal_evaluate(event, st["memory_graph"], x, B_xg, now)
-    M = hippo["M"]
-    ReframedContext = hippo["ReframedContext"]
-    HabituationSignal = hippo["HabituationSignal"]
-    HistoricalResidual = hippo["HistoricalResidual"]
-    M_text = hippo["M_text"]
-
     # [013 语义信号 S] 真提取：evaluator 从用户消息文本提取 4 维信号
     #   （效价/唤醒/支配/强度；valence ∈ [-1,1]，敌意消息给负价——修复 012
     #   占位 S 把"攻击"当正效价注入导致抑制链路熄火的问题）。
@@ -236,22 +232,18 @@ def run_scenario(scenario, feature_mode="fixture"):
     #   慢通路→E_raw→D_error）。上提不改变 S 的取值（同输入同缓存）。
     S, S_source = extract_semantic_signals(fx["input"])
 
-    # 读取侧（T31 重构 · 017.5 落地：包级相关性匹配 + 轮级回捞）
-    #   匹配：sim = max(cos_now_mean, cos_now_peak)，全包 argmax，
-    #         sim < TAU_FLOOR 不召回；
-    #   命中：raw_pointer 回捞 top2 最相关轮，evaluator 现场重提 S
-    #         （轮级新鲜语义，告别整包 emotion_value 稀释）。
-    #   旧包（无嵌入）/ 嵌入失败 / 开关关闭：退回 packages[-1] 旧路径。
-    if MEMORY_READ_ENABLED:
-        packages = st["archiver"].get_packages()
-        if packages:
-            st["recalled_memory"] = _recall_match(st, packages, fx["input"],
-                                                  st["round_counter"] + 1,
-                                                  now_valence=float(S[0]))
-        else:
-            st["recalled_memory"] = None
-    else:
-        st["recalled_memory"] = None
+    # 检索网关（029 第一阶段）：事件级（海马体）与包级（读原文）一次调用。
+    #   网关内部仍分别调用 hippocampal_evaluator.evaluate 与 _recall_match，
+    #   不合并打分、不改阈值；本处只负责取回结果（行为与改造前逐位等价）。
+    _recall = memory_recall(fx["input"], event, st["memory_graph"], x, B_xg,
+                            now, st, st["round_counter"] + 1,
+                            now_valence=float(S[0]))
+    M = _recall.m_vec
+    ReframedContext = _recall.reframed_context
+    HabituationSignal = _recall.habituation_signal
+    HistoricalResidual = _recall.historical_residual
+    M_text = _recall.m_text
+    st["recalled_memory"] = _recall.recalled
 
     # T31 方向公式（017.txt 4.3 落地，取代 T24 的 ev×sign 直注）：
     #   threat_now = max(D_error_prev, HR, -S_valence)——海马体与读取侧
@@ -293,16 +285,30 @@ def run_scenario(scenario, feature_mode="fixture"):
     D_slow, V = run_slow_path(x, ReframedContext, M, B, st["w_PFC"], HabituationSignal, S)
 
     # 情绪释放器（S_valence = S[0]）
-    raw_emotion_impact, released_impact, release_rate = run_releaser(V, D_fast, HabituationSignal, S[0])
+    raw_emotion_impact, released_impact, release_rate = run_releaser(
+        V, D_fast, HabituationSignal, S[0], S=S)
 
     # 情绪加点
     E_raw = run_emotion(st["E_prev"], released_impact, B)
 
-    # 拦截层
-    neg_intensity, S_E, D_error, I_inhibit, E_final, w_PFC_new = run_intercept(E_raw, st["w_PFC"])
+    # [032] 危险度接入自控：先按本轮 V/S 算 danger_score。
+    # [033] 高门：danger_boost = max(0, danger - DANGER_NEUTRAL)，
+    #   中性线以下的轻度事件（如被质疑）不放大自控误差。
+    #   danger_now 同时用于回写 event.danger_score，避免重复计算与口径漂移。
+    danger_now = compute_danger_score(S[0], V, fx["event_severity"])
+    danger_boost = max(0.0, danger_now - config.DANGER_NEUTRAL)
 
-    # 策略
-    action = policy_minimal(E_final, I_inhibit, fx["event_severity"])
+    # 拦截层
+    neg_intensity, S_E, D_error, I_inhibit, E_final, w_PFC_new = run_intercept(
+        E_raw, st["w_PFC"], danger_boost=danger_boost)
+
+    # 策略（[037] 直通闸改判 danger_now 本身，不再传 danger_boost）
+    action = policy_minimal(E_final, I_inhibit, fx["event_severity"],
+                            danger_now=danger_now,
+                            express_cooldown=express_cooldown_before)
+    # [039] 破防后进入冷却：接下来 10 轮不再触发 express
+    if action == "express":
+        st["express_cooldown"] = 10
 
     # 状态翻译 + prompt + LLM
     # [023] Action 闭环（清单问题1）：action 进 Prompt——state_translator
@@ -322,7 +328,7 @@ def run_scenario(scenario, feature_mode="fixture"):
     event.event_severity = fx["event_severity"]
     # [019] 复合危险度（018 议题一）：语义厌恶锚 + 奖惩对比 + 严重度门，
     #   替代 V[1]*2-0.5（奖励信号驱动，赞美被判最危险，HR 正反馈 runaway）
-    event.danger_score = compute_danger_score(S[0], V, fx["event_severity"])
+    event.danger_score = danger_now
     event.importance = fx["importance"]
     event.emotion_weight = fx["emotion_weight"]
     event.unfinished = fx["unfinished"]
@@ -372,7 +378,7 @@ def run_scenario(scenario, feature_mode="fixture"):
     # 写入侧（M2-D）：每轮结束写缓冲区，达阈值归档
     #   [017.5] 记录补 intensity/valence（= 本轮 S[3]/S[0]）——归档器据此
     #   选包内"情绪最强轮"作 peak_vec（见 archiver._compute_pkg_vectors）。
-    if MEMORY_WRITE_ENABLED:
+    if config.MEMORY_WRITE_ENABLED:
         st["round_counter"] += 1
         st["memory_buffer"].append({
             "round_id": st["round_counter"],
@@ -381,6 +387,9 @@ def run_scenario(scenario, feature_mode="fixture"):
             "timestamp": now,
             "intensity": float(S[3]),
             "valence": float(S[0]),
+            # [029 任务3] 写入侧补危险度原料：供包级聚合与后续 HR 反推
+            #   （round 级 danger，避免整包均值稀释威胁；旧记录无此字段）
+            "danger_score": float(event.danger_score),
         })
         if st["archiver"].should_archive():
             st["archiver"].archive()
@@ -394,8 +403,16 @@ def run_turn(state, scenario, feature_mode="fixture"):
     与 run_scenario 的唯一区别：不调用 reset_state，直接用外部传入的 state，
     支持跨多轮积累 memory_buffer / raw_log / archiver 等。
     """
+    # [031] 性格冷切换：会话创建时固定 profile_id，本入口每轮按会话加载一次。
+    #   作用：即使同一进程里别的会话改过全局 config，本会话也不会漂移。
+    config.load_personality(state.get("profile_id", config.PERSONALITY_DEFAULT))
     fx = get_fixture(scenario)
     st = state
+
+    # [039] 破防冷却：轮初先读旧值、再递减；旧值用于本轮判定，
+    #   使 express 触发后置 10 恰好封住接下来 10 轮（第 11 轮可再次破防）。
+    express_cooldown_before = int(st.get("express_cooldown", 0))
+    st["express_cooldown"] = max(0, express_cooldown_before - 1)
 
     now = time.time()
 
@@ -429,14 +446,6 @@ def run_turn(state, scenario, feature_mode="fixture"):
     B = st["B"]
     B_xg = update_xinguang_budget(B[0], B[1])
 
-    # 海马体评估
-    hippo = hippocampal_evaluate(event, st["memory_graph"], x, B_xg, now)
-    M = hippo["M"]
-    ReframedContext = hippo["ReframedContext"]
-    HabituationSignal = hippo["HabituationSignal"]
-    HistoricalResidual = hippo["HistoricalResidual"]
-    M_text = hippo["M_text"]
-
     # [013 语义信号 S] 真提取：evaluator 从用户消息文本提取 4 维信号
     #   （效价/唤醒/支配/强度；valence ∈ [-1,1]，敌意消息给负价——修复 012
     #   占位 S 把"攻击"当正效价注入导致抑制链路熄火的问题）。
@@ -446,22 +455,18 @@ def run_turn(state, scenario, feature_mode="fixture"):
     #   慢通路→E_raw→D_error）。上提不改变 S 的取值（同输入同缓存）。
     S, S_source = extract_semantic_signals(fx["input"])
 
-    # 读取侧（T31 重构 · 017.5 落地：包级相关性匹配 + 轮级回捞）
-    #   匹配：sim = max(cos_now_mean, cos_now_peak)，全包 argmax，
-    #         sim < TAU_FLOOR 不召回；
-    #   命中：raw_pointer 回捞 top2 最相关轮，evaluator 现场重提 S
-    #         （轮级新鲜语义，告别整包 emotion_value 稀释）。
-    #   旧包（无嵌入）/ 嵌入失败 / 开关关闭：退回 packages[-1] 旧路径。
-    if MEMORY_READ_ENABLED:
-        packages = st["archiver"].get_packages()
-        if packages:
-            st["recalled_memory"] = _recall_match(st, packages, fx["input"],
-                                                  st["round_counter"] + 1,
-                                                  now_valence=float(S[0]))
-        else:
-            st["recalled_memory"] = None
-    else:
-        st["recalled_memory"] = None
+    # 检索网关（029 第一阶段）：事件级（海马体）与包级（读原文）一次调用。
+    #   网关内部仍分别调用 hippocampal_evaluator.evaluate 与 _recall_match，
+    #   不合并打分、不改阈值；本处只负责取回结果（行为与改造前逐位等价）。
+    _recall = memory_recall(fx["input"], event, st["memory_graph"], x, B_xg,
+                            now, st, st["round_counter"] + 1,
+                            now_valence=float(S[0]))
+    M = _recall.m_vec
+    ReframedContext = _recall.reframed_context
+    HabituationSignal = _recall.habituation_signal
+    HistoricalResidual = _recall.historical_residual
+    M_text = _recall.m_text
+    st["recalled_memory"] = _recall.recalled
 
     # T31 方向公式（017.txt 4.3 落地，取代 T24 的 ev×sign 直注）：
     #   threat_now = max(D_error_prev, HR, -S_valence)——海马体与读取侧
@@ -503,16 +508,30 @@ def run_turn(state, scenario, feature_mode="fixture"):
     D_slow, V = run_slow_path(x, ReframedContext, M, B, st["w_PFC"], HabituationSignal, S)
 
     # 情绪释放器（S_valence = S[0]）
-    raw_emotion_impact, released_impact, release_rate = run_releaser(V, D_fast, HabituationSignal, S[0])
+    raw_emotion_impact, released_impact, release_rate = run_releaser(
+        V, D_fast, HabituationSignal, S[0], S=S)
 
     # 情绪加点
     E_raw = run_emotion(st["E_prev"], released_impact, B)
 
-    # 拦截层
-    neg_intensity, S_E, D_error, I_inhibit, E_final, w_PFC_new = run_intercept(E_raw, st["w_PFC"])
+    # [032] 危险度接入自控：先按本轮 V/S 算 danger_score。
+    # [033] 高门：danger_boost = max(0, danger - DANGER_NEUTRAL)，
+    #   中性线以下的轻度事件（如被质疑）不放大自控误差。
+    #   danger_now 同时用于回写 event.danger_score，避免重复计算与口径漂移。
+    danger_now = compute_danger_score(S[0], V, fx["event_severity"])
+    danger_boost = max(0.0, danger_now - config.DANGER_NEUTRAL)
 
-    # 策略
-    action = policy_minimal(E_final, I_inhibit, fx["event_severity"])
+    # 拦截层
+    neg_intensity, S_E, D_error, I_inhibit, E_final, w_PFC_new = run_intercept(
+        E_raw, st["w_PFC"], danger_boost=danger_boost)
+
+    # 策略（[037] 直通闸改判 danger_now 本身，不再传 danger_boost）
+    action = policy_minimal(E_final, I_inhibit, fx["event_severity"],
+                            danger_now=danger_now,
+                            express_cooldown=express_cooldown_before)
+    # [039] 破防后进入冷却：接下来 10 轮不再触发 express
+    if action == "express":
+        st["express_cooldown"] = 10
 
     # 状态翻译 + prompt + LLM
     # [023] Action 闭环（清单问题1）：action 进 Prompt——state_translator
@@ -532,7 +551,7 @@ def run_turn(state, scenario, feature_mode="fixture"):
     event.event_severity = fx["event_severity"]
     # [019] 复合危险度（018 议题一）：语义厌恶锚 + 奖惩对比 + 严重度门，
     #   替代 V[1]*2-0.5（奖励信号驱动，赞美被判最危险，HR 正反馈 runaway）
-    event.danger_score = compute_danger_score(S[0], V, fx["event_severity"])
+    event.danger_score = danger_now
     event.importance = fx["importance"]
     event.emotion_weight = fx["emotion_weight"]
     event.unfinished = fx["unfinished"]
@@ -582,7 +601,7 @@ def run_turn(state, scenario, feature_mode="fixture"):
     # 写入侧（M2-D）：每轮结束写缓冲区，达阈值归档
     #   [017.5] 记录补 intensity/valence（= 本轮 S[3]/S[0]）——归档器据此
     #   选包内"情绪最强轮"作 peak_vec（见 archiver._compute_pkg_vectors）。
-    if MEMORY_WRITE_ENABLED:
+    if config.MEMORY_WRITE_ENABLED:
         st["round_counter"] += 1
         st["memory_buffer"].append({
             "round_id": st["round_counter"],
@@ -591,6 +610,9 @@ def run_turn(state, scenario, feature_mode="fixture"):
             "timestamp": now,
             "intensity": float(S[3]),
             "valence": float(S[0]),
+            # [029 任务3] 写入侧补危险度原料：供包级聚合与后续 HR 反推
+            #   （round 级 danger，避免整包均值稀释威胁；旧记录无此字段）
+            "danger_score": float(event.danger_score),
         })
         if st["archiver"].should_archive():
             st["archiver"].archive()

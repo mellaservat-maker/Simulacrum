@@ -5,12 +5,7 @@
 #   进入 Prompt——旧版 action 只落在 log 里，LLM 完全没听话。
 # ============================================================
 
-from config import (
-    PROMPT_VALENCE_THRESHOLD,
-    PROMPT_POSITIVE_THRESHOLD,
-    PROMPT_INHIBIT_THRESHOLD,
-    PROMPT_HABITUATION_THRESHOLD,
-)
+import config
 
 # [023] 行动策略强指令表（与 policy.py 的优先级对应：
 #   ask_clarify > suppress > reappraise > express > task_first）。
@@ -32,21 +27,21 @@ def action_directive(action):
 def state_to_prompt(E_final, I_inhibit, M_text, HistoricalResidual, HabituationSignal,
                     action="task_first"):
     # 感受（自然语言，不带数字）
-    if E_final[0] < PROMPT_VALENCE_THRESHOLD:
+    if E_final[0] < config.PROMPT_VALENCE_THRESHOLD:
         feeling_text = "有点被冒犯，心里不太舒服"
-    elif E_final[0] > PROMPT_POSITIVE_THRESHOLD:
+    elif E_final[0] > config.PROMPT_POSITIVE_THRESHOLD:
         feeling_text = "心情不错，挺开心的"
     else:
         feeling_text = "没什么特别的波动"
 
     # 自控（自然语言，不带数字）
-    if I_inhibit > PROMPT_INHIBIT_THRESHOLD:
+    if I_inhibit > config.PROMPT_INHIBIT_THRESHOLD:
         control_text = "你在努力克制，不想让情绪跑出来"
     else:
         control_text = "你没怎么在压制自己"
 
     # 熟悉度（自然语言，不带数字）
-    if HabituationSignal > PROMPT_HABITUATION_THRESHOLD:
+    if HabituationSignal > config.PROMPT_HABITUATION_THRESHOLD:
         familiarity_text = "这种情况你碰到过几次了，有点麻木"
     else:
         familiarity_text = "这件事对你来说还比较新鲜"

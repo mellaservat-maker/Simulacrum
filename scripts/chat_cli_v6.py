@@ -35,6 +35,7 @@ import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
 import pipeline
+import config
 from config import (LLM_BACKEND, MEMORY_WRITE_ENABLED, MEMORY_READ_ENABLED,
                     THETA_UP)
 from state import reset_state
@@ -235,9 +236,26 @@ def save_state(st):
     return session_store.save(_CLI_SESSION_ID, st)
 
 
-def interactive_main():
+def _profile_label(pid):
+    p = config.PERSONALITY_PROFILES.get(pid, {})
+    return "%s（%s）" % (p.get("label", pid), pid)
+
+
+def _print_profile(st):
+    print("  性格预设   : %s（会话级冷切换，运行中不热切换）"
+          % _profile_label(st.get("profile_id", "standard")))
+
+
+def interactive_main(profile_override=False):
     _print_banner()
     st = load_or_new_state()
+    if profile_override:
+        # [031] 启动参数显式指定：覆盖本会话性格（仍是启动时切换，不是运行中热切）
+        st["profile_id"] = config.ACTIVE_PROFILE_ID
+    else:
+        # [031] 未指定参数：沿用会话里保存的性格；旧会话无字段 → standard
+        config.load_personality(st.get("profile_id", config.PERSONALITY_DEFAULT))
+    _print_profile(st)
     last_log = None
     while True:
         try:
@@ -290,6 +308,7 @@ def selftest_main(turns=3):
     ][:max(1, turns)]
     st = reset_state(seed=42)
     _print_banner()
+    _print_profile(st)
     last_log = None
     for i, t in enumerate(texts, start=1):
         print("--- 自动第 %d/%d 轮 ---" % (i, len(texts)))
@@ -311,10 +330,19 @@ def main():
     ap = argparse.ArgumentParser(description="情绪仿生系统终端对话 v6.1")
     ap.add_argument("--selftest", action="store_true", help="无人值守自测 3 轮")
     ap.add_argument("--turns", type=int, default=3, help="自测轮数（默认 3）")
+    ap.add_argument("--profile", default=None,
+                    help="性格预设：standard / sensitive / gentle，"
+                         "也可写 标准型 / 敏感型 / 温和型")
     args = ap.parse_args()
+    try:
+        if args.profile:
+            config.load_personality(args.profile)
+    except ValueError as e:
+        print("参数错误：%s" % e)
+        return 2
     if args.selftest:
         return selftest_main(args.turns)
-    interactive_main()
+    interactive_main(profile_override=bool(args.profile))
     return 0
 
 

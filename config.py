@@ -91,8 +91,9 @@ else:
 
 v_v = np.array([0.5, 0.5])                      # [未校准]
 b_v = np.array([0.5, 0.5])                      # [未校准]
-w_e = np.array([1.5, 1.5, 1.5, 1.5])            # [未校准]
-w_i = 3.0                                       # [未校准]
+w_e = np.array([1.5, 0.0, 0.0, 0.0])            # [030 临时] 后三维置零：本批只让 E[0] 参与 S_E，
+                                                #   直到策略阈值单独校准（028 草案 4.6 的分批纪律）
+w_i = 1.2                                       # [037 裁决] 3.0→1.2：轴一抗压持续性
 THETA_FAST = 0.5                                # [未校准]
 THETA_ERROR = 0.3                               # [未校准]
 XG_W_ACT = np.array([0.35, 0.25, 0.20, 0.10, 0.10])
@@ -171,19 +172,134 @@ THETA_POS = 0.30                 # [未校准] 正极性轮/包判定阈值（�
 THETA_MILD = 0.15                # [未校准] 轻度威胁区下界：-THETA_RAGE <= now_val < -0.15 软惩罚
 LAMBDA_POL = 0.50                # [未校准] 软惩罚强度：sim_eff = sim x (1 - LAMBDA_POL*pv*(-now_val))
 
+# [032] 危险度→自控增益：D_error 追加 danger_boost × W_DANGER
+W_DANGER = 0.30                  # [未校准] 危险度对自控误差的增益（初值 0.3）
+# [033] 高门：先扣掉中性线，只有超出部分才进入自控（轻度事件不放大）
+DANGER_NEUTRAL = 0.30            # [未校准] 危险度中性线；danger<=此值时 boost=0
+# [032] 策略直通阈值：危险度极高时可跳过“半防/权衡”档，直接进入 suppress
+POLICY_DANGER_BOOST_HIGH = 0.80  # [未校准] 危险度直通压制阈值
+
+# ============================================================
+# [031 任务3] 性格预设（028 草案 2.2）
+#   只把“个体差异”五项打包：W_SEM / W_CON / W_SEV / SEV_NEUTRAL / LAMBDA_POL。
+#   THETA_RAGE / THETA_POS / THETA_MILD 是机制边界，保持全局，不进预设
+#   （移动它们会改变区间语义并让 017.5 极性探针基线失效）。
+#   danger_gain 是整体刻度：先乘三项和再 clip，使不同性格的危险度绝对值
+#   不同，但与 THETA_UP 等阈值的相对关系可控。
+#   [037.1 语义裁决] 撤回每性格衰竭系数后，分化由全局 w_i=1.2 与 D_error 驱动，
+#   方向是有意接受的：gentle 危险度最低，自控值最先落到阈值下，最先放弃抑制
+#   （不在乎所以早放弃）；sensitive 危险度最高，硬撑最久（过度在意所以扛得久）。
+#   这不是符号错误，是“威胁感知度决定抗压时长”的设计语义。
+#   冷切换：profile 固定到会话（state["profile_id"]），运行中不热切换。
+# ============================================================
+PERSONALITY_DEFAULT = "standard"
+PERSONALITY_PROFILES = {
+    "standard": {
+        "label": "标准型",
+        "w_sem": 0.60,
+        "w_con": 1.50,
+        "w_sev": 0.50,
+        "sev_neutral": 0.30,
+        "lambda_pol": 0.50,
+        "danger_gain": 1.00,
+    },
+    "sensitive": {
+        "label": "敏感型",
+        "w_sem": 0.85,
+        "w_con": 1.70,
+        "w_sev": 0.65,
+        "sev_neutral": 0.20,
+        "lambda_pol": 0.65,
+        "danger_gain": 1.00,
+    },
+    "gentle": {
+        "label": "温和型",
+        "w_sem": 0.45,
+        "w_con": 1.25,
+        "w_sev": 0.35,
+        "sev_neutral": 0.40,
+        "lambda_pol": 0.35,
+        "danger_gain": 0.85,
+    },
+}
+# 中文别名，便于终端直接 --profile 敏感型
+_PERSONALITY_ALIASES = {
+    "标准": "standard", "标准型": "standard", "standard": "standard",
+    "敏感": "sensitive", "敏感型": "sensitive", "sensitive": "sensitive",
+    "温和": "gentle", "温和型": "gentle", "gentle": "gentle",
+}
+
+ACTIVE_PROFILE_ID = PERSONALITY_DEFAULT
+DANGER_GAIN = PERSONALITY_PROFILES[PERSONALITY_DEFAULT]["danger_gain"]
+# [037] 性格衰竭系数已删除；保留固定 1.0 的键，供 t49 十三键还原断言使用，
+#   公式退化为原始 -KAPPA*w_PFC。
+W_PFC_FACTOR = 1.0
+
+
+def load_personality(name=None):
+    """运行时加载性格预设（冷切换：由会话在启动/恢复时调用一次）。
+
+    只更新五项性格参数与 danger_gain；物理规则（LAMBDA/DELTA/RHO/KAPPA/
+    GAMMA/THETA_* 等）一律不动。返回规范化后的 profile_id。
+    """
+    key = PERSONALITY_DEFAULT if name is None else str(name).strip()
+    key = _PERSONALITY_ALIASES.get(key, _PERSONALITY_ALIASES.get(key.lower(), key))
+    if key not in PERSONALITY_PROFILES:
+        raise ValueError("未知性格预设：%r（可选：%s）"
+                         % (name, "、".join(PERSONALITY_PROFILES.keys())))
+    p = PERSONALITY_PROFILES[key]
+    global W_SEM, W_CON, W_SEV, SEV_NEUTRAL, LAMBDA_POL
+    global DANGER_GAIN, ACTIVE_PROFILE_ID
+    W_SEM = float(p["w_sem"])
+    W_CON = float(p["w_con"])
+    W_SEV = float(p["w_sev"])
+    SEV_NEUTRAL = float(p["sev_neutral"])
+    LAMBDA_POL = float(p["lambda_pol"])
+    DANGER_GAIN = float(p["danger_gain"])
+    ACTIVE_PROFILE_ID = key
+    return key
+
+
+load_personality(PERSONALITY_DEFAULT)
+
 c_E = 1.0                                       # [012 新增] S_valence 进 raw_emotion_impact[0] 的增益
 
 # 【V4.2】b_E 由 D_fast 驱动，语义为"即时情绪冲击偏置"
+# [030] 与新四维语义对齐：威胁时唤醒升、掌控降、焦虑升（旧值后三维全正，
+#   会把威胁错误翻译成"唤醒升、掌控升、焦虑升"）。
 B_E_DANGER_VALENCE = -1.0                       # [未校准]
-b_E = np.array([B_E_DANGER_VALENCE, 0.3, 0.1, 0.1])
+b_E = np.array([B_E_DANGER_VALENCE, 0.25, -0.10, 0.10])
 
 # 【V4.2 修正 1】A_INIT 第一行符号修正
+# [030 四维有值化] 后三行去共线化（028 草案 4.1）：旧版后三行都是第 0 行的
+#   缩放复制，四维只有一个自由度。新语义：
+#     行0 效价：V[0]惩罚→负、V[1]奖励→正
+#     行1 唤醒：惩罚/奖励都提升激活，惩罚略高
+#     行2 掌控：惩罚降掌控、奖励升掌控
+#     行3 焦虑：惩罚升焦虑、奖励轻微降焦虑（非线性合取见 G_S/K_ANX）
 A_INIT = np.array([
-    [-0.5,  0.5],   # V[0]=惩罚→负效价, V[1]=奖励→正效价
-    [ 0.2, -0.2],
-    [ 0.3, -0.3],
-    [ 0.1, -0.1],
+    [-0.50,  0.50],
+    [ 0.20,  0.15],
+    [-0.25,  0.20],
+    [ 0.20, -0.05],
 ])
+
+# [030] 语义冲击矩阵 G_S（S→情绪四维冲击，028 草案 4.2）
+#   行0 留空：效价已由 c_E 与 f_v 承担，避免三重计入（草案 4.4）。
+#   行1 唤醒：+0.25*S[1] + 0.15*S[3]
+#   行2 掌控：+0.25*S[0] - 0.30*S[2]（被认可升掌控；对方越强势越失控）
+#     030 实测微调：草案初值 S0 系数 0.20 时，mock 词典口径（S0=0.537、
+#     V 两行区分度小）被夸 E2=-0.0026，落在边界负侧；按同一公式把 S0
+#     系数提到 0.25，使被夸 E2 稳定为正（真实 LLM 口径 S0 更高，同样通过）。
+#   行3 焦虑：线性部分留空，由 emotion_releaser 的非线性合取补：
+#     K_ANX * max(0, -S0) * (0.5+0.5*S1) * (0.5+0.5*S3) * (0.5+0.5*S2)
+G_S = np.array([
+    [0.00,  0.00,  0.00,  0.00],
+    [0.00,  0.25,  0.00,  0.15],
+    [0.25,  0.00, -0.30,  0.00],
+    [0.00,  0.00,  0.00,  0.00],
+])
+K_ANX = 0.60                                    # [未校准] 焦虑合取增益
 
 C_INIT = np.array([
     [0.10, 0.20, 0.10, 0.10],
@@ -216,7 +332,9 @@ KAPPA = 0.6  # [014.5 裁决] 所有者要看真正的防线崩溃：0.5→0.6�
             #   真要全崩塌需改结构：RHO=1.0（疲劳不衰减）且 KAPPA·W_MAX >=
             #   w_i·D_error，或 DELTA 大幅提高。硬边界未动：w_PFC 仍 clip
             #   [0,W_MAX]、I_inhibit 仍 clip [0,1]（intercept.py）。
-DELTA = 0.1
+DELTA = 0.25  # [039 裁决] 0.1→0.25：轴一疲劳增量，让 I 真实累到 0.30 以下，
+              #   使 express 可达；代价是 S1/t49/037 基线全部改变，已同批重校。
+              #   闭式稳态 I* = w_i*D/(1+KAPPA*DELTA/(1-RHO)) = 1.2D/4 = 0.3D
 RHO = 0.95
 ETA = 0.3
 W_H = 0.5
@@ -281,7 +399,9 @@ HR_GUARD_MAGNITUDE = 0.3        #   且注入幅值超过此值时，注入幅�
 # 策略阈值
 POLICY_THRESHOLD_HIGH_SEV = 0.8
 POLICY_THRESHOLD_INHIBIT_HIGH = 0.7
-POLICY_THRESHOLD_INHIBIT_MID = 0.4
+POLICY_THRESHOLD_INHIBIT_MID = 0.20  # [037.1 裁决] 0.25→0.20：encoder 模式被质疑 I=0.2281，
+                                    #   0.25 会落 task_first；0.20 使 fixture 与 encoder
+                                    #   都保住 reappraise。t49 扫描 0.20 四项全满足
 POLICY_THRESHOLD_SEV_LOW = 0.5
 POLICY_EXPRESS_VALENCE = -0.5
 POLICY_EXPRESS_INHIBIT = 0.3
@@ -376,6 +496,8 @@ assert not (set(POSITIVE_WORDS) & set(DANGER_KEYWORDS))
 # [M3 TODO] T29 重做 fixture 使 x 适配 1024 维 M，或废弃 fixture 模式（L27）
 # [M3 TODO] T30 考虑把召回情绪值注入改到 tanh 内部（需碰 hippocampal_evaluator.py）
 # [M3 TODO] T31 明确召回对当前评估的作用方向：放大危险（现状）还是习惯化削弱，待所有者决策
+# [M4 TODO] T50 解决 standard 与 sensitive 在 10 轮短对话窗口内 action 撞档的问题
+#   （当前仅 gentle 与其余两档分化）。
 # [013 待办 A] evaluator 效价校准：质疑/求证类输入是否应判负价（实测被质疑 valence=-0.4
 #   → I_inhibit>0.7 → suppress，M1 遗留预期为 reappraise；疑问≠敌意，待设计会裁议）
 # [014 待办 B'] 损耗型强度（014 已裁决 KAPPA 0.2→0.5）：不动点公式

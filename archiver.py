@@ -71,6 +71,8 @@ class Archiver:
         # [017.5 T31] 包级双向量索引（mock/LLM 两条路径共用，向量与叙事来源无关）
         # [019] 第三返回值 mean_valence：包内各轮 S_valence 均值（整体极性）
         mean_vec, peak_vec, mean_valence = self._compute_pkg_vectors(records)
+        # [029] 包级危险度聚合（写入侧原料；旧记录无 danger_score → None）
+        n_rounds, mean_danger, max_danger = self._compute_pkg_danger(records)
 
         if config.LLM_BACKEND == "mock":
             # 桩逻辑：固定拼接
@@ -106,6 +108,9 @@ class Archiver:
                 mean_vec=mean_vec,
                 peak_vec=peak_vec,
                 mean_valence=mean_valence,
+                n_rounds=n_rounds,
+                mean_danger=mean_danger,
+                max_danger=max_danger,
                 narrative_cause=narrative_cause,
                 narrative_trigger=narrative_trigger,
                 narrative_consequence=narrative_consequence,
@@ -182,6 +187,9 @@ class Archiver:
                 mean_vec=mean_vec,
                 peak_vec=peak_vec,
                 mean_valence=mean_valence,
+                n_rounds=n_rounds,
+                mean_danger=mean_danger,
+                max_danger=max_danger,
                 narrative_cause=str(data.get("narrative_cause", "")),
                 narrative_trigger=str(data.get("narrative_trigger", "")),
                 narrative_consequence=str(data.get("narrative_consequence", "")),
@@ -241,3 +249,22 @@ class Archiver:
             return mean_vec, mean_vec.copy(), mean_val  # 无强度信息：peak 退化为 mean
         peak_vec = vecs[int(np.argmax(intensities))]
         return mean_vec, peak_vec, mean_val
+
+    # [029 任务3] 包级危险度聚合：写入侧原料。
+    #   口径：对包内各轮 record["danger_score"] 求均值与最大值；
+    #   旧记录无该字段 → 不参与均值；全包缺失 → (n_rounds, None, None)。
+    #   n_rounds 始终为包内记录总数，供后续 HR 反推与去重时判断包规模。
+    def _compute_pkg_danger(self, records: List[Dict[str, Any]]):
+        vals = []
+        for r in records:
+            d = r.get("danger_score", None)
+            if d is None:
+                continue
+            try:
+                vals.append(float(d))
+            except (TypeError, ValueError):
+                continue
+        n_rounds = len(records)
+        if not vals:
+            return n_rounds, None, None
+        return n_rounds, float(np.mean(vals)), float(np.max(vals))

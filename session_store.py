@@ -75,6 +75,11 @@ def _pkg_to_dict(p):
         "peak_vec": _vec_to_b64(getattr(p, "peak_vec", None)),
         "mean_valence": (None if getattr(p, "mean_valence", None) is None
                          else float(p.mean_valence)),
+        "n_rounds": int(getattr(p, "n_rounds", 0) or 0),
+        "mean_danger": (None if getattr(p, "mean_danger", None) is None
+                        else float(p.mean_danger)),
+        "max_danger": (None if getattr(p, "max_danger", None) is None
+                       else float(p.max_danger)),
         "narrative_cause": getattr(p, "narrative_cause", ""),
         "narrative_trigger": getattr(p, "narrative_trigger", ""),
         "narrative_consequence": getattr(p, "narrative_consequence", ""),
@@ -95,6 +100,11 @@ def _dict_to_pkg(d):
         peak_vec=_b64_to_vec(d.get("peak_vec")),
         mean_valence=(None if d.get("mean_valence") is None
                       else float(d["mean_valence"])),
+        n_rounds=int(d.get("n_rounds", 0) or 0),
+        mean_danger=(None if d.get("mean_danger") is None
+                     else float(d["mean_danger"])),
+        max_danger=(None if d.get("max_danger") is None
+                    else float(d["max_danger"])),
         narrative_cause=str(d.get("narrative_cause", "")),
         narrative_trigger=str(d.get("narrative_trigger", "")),
         narrative_consequence=str(d.get("narrative_consequence", "")),
@@ -159,6 +169,10 @@ def dump_state(st):
         "HabituationSignal_prev": float(st.get("HabituationSignal_prev", 0.0)),
         "alpha_prev": float(st.get("alpha_prev", 0.0)),
         "D_error_prev": float(st.get("D_error_prev", 0.0)),
+        # [031] 性格预设随会话持久化（冷切换）；旧文件缺字段 → standard
+        "profile_id": str(st.get("profile_id", "standard")),
+        # [039] 破防冷却计数；旧文件缺字段 → 0
+        "express_cooldown": int(st.get("express_cooldown", 0)),
         "E_prev": _vec_to_b64(st.get("E_prev")),
         "B": _vec_to_b64(st.get("B")),
         "M_prev": _vec_to_b64(st.get("M_prev")),
@@ -179,6 +193,10 @@ def load_state(data, warn=print):
             data.get("HabituationSignal_prev", st["HabituationSignal_prev"]))
         st["alpha_prev"] = float(data.get("alpha_prev", st["alpha_prev"]))
         st["D_error_prev"] = float(data.get("D_error_prev", st["D_error_prev"]))
+        # [031] 旧会话无 profile_id → standard（不因缺字段而拒绝载入）
+        st["profile_id"] = str(data.get("profile_id", "standard") or "standard")
+        # [039] 旧会话无 express_cooldown → 0
+        st["express_cooldown"] = max(0, int(data.get("express_cooldown", 0) or 0))
         for key in ("E_prev", "B", "M_prev"):
             vec = _b64_to_vec(data.get(key))
             if vec is not None:

@@ -5,35 +5,40 @@
 
 import numpy as np
 
-from config import (w_e, w_i, THETA_ERROR, KAPPA, b_i, GAMMA, RHO, DELTA, W_MAX,
-                    W_PFC_RECOVERY_RATE, W_PFC_RECOVERY_THRESHOLD,
-                    TAU_FLOOR, THETA_UP, THETA_DOWN,
-                    THREAT_LOWPASS_KEEP, THREAT_LOWPASS_NEW,
-                    H_CAP, H_EVIDENCE_GATE, SEVERITY_GATE, CAP_POS,
-                    RECALL_TIME_WINDOW, HR_GUARD_THRESHOLD, HR_GUARD_MAGNITUDE)
+import config
 
 
-def run_intercept(E_raw, w_PFC):
+def run_intercept(E_raw, w_PFC, danger_boost=0.0):
     neg_intensity = np.maximum(-E_raw, 0.0)
-    S_E = float(np.clip(w_e @ neg_intensity, 0.0, 1.0))
-    D_error = max(0.0, S_E - THETA_ERROR)
-    # [012 损耗型] w_PFC 是被消耗的意志力疲劳值：累积越高抑制防线越脆弱。
+    S_E = float(np.clip(config.w_e @ neg_intensity, 0.0, 1.0))
+    # [032] 危险度接入自控：D_error = max(0, S_E-THETA_ERROR) + danger_boost×W_DANGER
+    #   danger_boost 为本轮 danger_score（性格五项 + danger_gain 已生效）。
+    #   说明：danger_boost 为负（被夸/安全事件）时该项可为负，使 D_error 下探；
+    #   下游 I_inhibit 仍 clip 到 [0,1]，不会产生负自控。
+    D_error = (max(0.0, S_E - config.THETA_ERROR)
+               + float(danger_boost) * config.W_DANGER)
+    # [032 损耗型] w_PFC 是被消耗的意志力疲劳值：累积越高抑制防线越脆弱。
     # 009.5 及以前为 + KAPPA * w_PFC（越压抑越能压的"修为"叙事，与 004/005
     #   文档记述的"自我损耗"相反）；012 号工作按所有者裁决 B 改为减号。
     # KAPPA 已由所有者逐轮上调：0.2（012 敏感度）→ 0.5（014 相变临界）→
     #   0.6（014.5，渐近侵蚀更深；不动点分析见 config.py 注释）。
-    I_inhibit = float(np.clip(w_i * D_error - KAPPA * w_PFC + b_i, 0.0, 1.0))
-    E_final = (1 - GAMMA * I_inhibit) * E_raw
+    # [033→037] 自控衰竭系数已在 037 撤回，W_PFC_FACTOR 固定 1.0，
+    #   公式恢复为原始疲劳侵蚀 -KAPPA*w_PFC（保留乘子只为 t49 还原断言）。
+    I_inhibit = float(np.clip(config.w_i * D_error
+                              - config.KAPPA * w_PFC * config.W_PFC_FACTOR
+                              + config.b_i, 0.0, 1.0))
+    E_final = (1 - config.GAMMA * I_inhibit) * E_raw
     # [014.5 疲劳代谢] 区分场景的疲劳代谢（所有者裁决：不能无条件降疲劳，
     #   否则"越骂越清醒"变受气包）：
     #   安全轮（D_error < 阈值 或 I_inhibit == 0）：疲劳自然消退，每轮
     #       max(0, w_PFC - W_PFC_RECOVERY_RATE)；
     #   受压轮（I_inhibit > 0 且 D_error >= 阈值）：按原损耗累积逻辑走，
     #       绝不降低——挨骂期间疲劳只涨不跌。
-    if D_error < W_PFC_RECOVERY_THRESHOLD or I_inhibit == 0.0:
-        w_PFC_new = max(0.0, w_PFC - W_PFC_RECOVERY_RATE)
+    if D_error < config.W_PFC_RECOVERY_THRESHOLD or I_inhibit == 0.0:
+        w_PFC_new = max(0.0, w_PFC - config.W_PFC_RECOVERY_RATE)
     else:
-        w_PFC_new = float(np.clip(RHO * w_PFC + DELTA * I_inhibit, 0.0, W_MAX))
+        w_PFC_new = float(np.clip(config.RHO * w_PFC + config.DELTA * I_inhibit,
+                                  0.0, config.W_MAX))
     return neg_intensity, S_E, D_error, I_inhibit, E_final, w_PFC_new
 
 
@@ -68,13 +73,14 @@ def update_threat_mode(threat_now, alpha_prev):
     """
     threat_now = float(threat_now)
     alpha_prev = float(alpha_prev)
-    if threat_now > THETA_UP:
+    if threat_now > config.THETA_UP:
         alpha_raw = 1.0
-    elif threat_now < THETA_DOWN:
+    elif threat_now < config.THETA_DOWN:
         alpha_raw = 0.0
     else:
         alpha_raw = alpha_prev  # 缓冲带：记仇但不动
-    alpha_new = THREAT_LOWPASS_KEEP * alpha_prev + THREAT_LOWPASS_NEW * alpha_raw
+    alpha_new = (config.THREAT_LOWPASS_KEEP * alpha_prev
+                 + config.THREAT_LOWPASS_NEW * alpha_raw)
     return alpha_new, alpha_raw
 
 
@@ -106,12 +112,12 @@ def run_recall_intercept(ev, sign, H, alpha, event_severity,
     # H_eff 软上限（017 雷点5补丁(1)：sqrt 凹变换 + H_CAP 硬顶）
     # 显式 float()：np.sqrt 返回 np.float64，若不转原生类型会随 detail
     # 泄漏进 logger 的 json.dumps（np.bool_ 不可序列化，017.5 生死门实测崩过）
-    H_eff = float(min(np.sqrt(max(H, 0.0)), H_CAP))
+    H_eff = float(min(np.sqrt(max(H, 0.0)), config.H_CAP))
 
     # 脱敏生效条件（017 雷点5补丁(2) 严重度门 + 雷点6补丁(2)(3) 证据门与时间窗）
-    recent = (pkg_age_rounds is None) or (float(pkg_age_rounds) <= RECALL_TIME_WINDOW)
-    desens_active = bool((H_eff >= H_EVIDENCE_GATE) and bool(recent)
-                         and (event_severity <= SEVERITY_GATE))
+    recent = (pkg_age_rounds is None) or (float(pkg_age_rounds) <= config.RECALL_TIME_WINDOW)
+    desens_active = bool((H_eff >= config.H_EVIDENCE_GATE) and bool(recent)
+                         and (event_severity <= config.SEVERITY_GATE))
     if desens_active:
         factor = alpha + (1.0 - alpha) * (-H_eff)
     else:
@@ -121,14 +127,14 @@ def run_recall_intercept(ev, sign, H, alpha, event_severity,
     delta_raw = float(ev * sign * factor)
     hr = float(historical_residual)
     guard_applied = False
-    if (abs(hr) > HR_GUARD_THRESHOLD
-            and abs(delta_raw) > HR_GUARD_MAGNITUDE
+    if (abs(hr) > config.HR_GUARD_THRESHOLD
+            and abs(delta_raw) > config.HR_GUARD_MAGNITUDE
             and ((hr > 0 and delta_raw > 0) or (hr < 0 and delta_raw < 0))):
         delta_raw *= 0.5
         guard_applied = True
 
     # 非对称 clip（017 雷点6补丁(1)：伤痛不限，淡定封顶）
-    delta = float(np.clip(delta_raw, -1.0, CAP_POS))
+    delta = float(np.clip(delta_raw, -1.0, config.CAP_POS))
 
     # 严重度门第二闸（017.5 生死门实测补丁）：severity > SEVERITY_GATE 时
     #   严禁正值注入——017.txt 4.4「只许放大，不许麻木」的输出端兑现。
@@ -137,7 +143,7 @@ def run_recall_intercept(ev, sign, H, alpha, event_severity,
     #   sim=0.418 > TAU_FLOOR=0.15，极性 positive），raw=ev×sign 仍是正的，
     #   = 最惨的时刻心情变好，与严重度门的存在意义矛盾。故在输出端加最终
     #   否决：正值一律归零；负向放大（ev×sign 本身为负）不受影响。
-    severity_positive_banned = bool(event_severity > SEVERITY_GATE and delta > 0.0)
+    severity_positive_banned = bool(event_severity > config.SEVERITY_GATE and delta > 0.0)
     if severity_positive_banned:
         delta = 0.0
 

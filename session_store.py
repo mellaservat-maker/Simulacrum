@@ -182,11 +182,14 @@ def dump_state(st):
         "events": [_event_to_dict(e) for e in st["memory_graph"].get_all()],
         # [045] 聊天记录（用户输入 + AI 回复）随会话落盘，供跨浏览器/跨设备
         #   拉取同一份文字历史。旧文件无此字段 → 空列表。
-        "messages": _dump_messages(st.get("messages")),
+        "messages": dump_messages(st.get("messages")),
+        # [050 A1] 上一轮真实计算的面板数值；旧文件无此字段 → null，
+        #   /state 据此区分「未计算」与「计算结果为 0」。
+        "last_metrics": _dump_metrics(st.get("last_metrics")),
     }
 
 
-def _dump_messages(msgs):
+def dump_messages(msgs):
     """只保留渲染必要字段，避免把临时对象写进存档。"""
     out = []
     for m in (msgs or []):
@@ -199,6 +202,32 @@ def _dump_messages(msgs):
         except Exception:
             ts = 0.0
         out.append({"role": role, "content": content, "ts": ts})
+    return out
+
+
+def _dump_metrics(m):
+    """面板数值白名单化：只保留可 JSON 化的标量与四维情绪。"""
+    if not isinstance(m, dict):
+        return None
+    out = {}
+    for k in ("w_PFC", "I_inhibit", "danger_now", "threat_now",
+              "alpha_mode", "turn_tokens"):
+        try:
+            out[k] = float(m[k]) if k != "turn_tokens" else int(m[k])
+        except (KeyError, TypeError, ValueError):
+            continue
+    e = m.get("e")
+    if isinstance(e, (list, tuple)) and len(e) == 4:
+        try:
+            out["e"] = [float(x) for x in e]
+        except (TypeError, ValueError):
+            pass
+    action = m.get("action")
+    if isinstance(action, str) and action:
+        out["action"] = action
+    # 没有核心三项就不算「已计算」，返回 None 让上层按未计算处理
+    if not all(k in out for k in ("w_PFC", "I_inhibit", "e")):
+        return None
     return out
 
 
@@ -217,7 +246,9 @@ def load_state(data, warn=print):
         # [039] 旧会话无 express_cooldown → 0
         st["express_cooldown"] = max(0, int(data.get("express_cooldown", 0) or 0))
         # [045] 旧会话无 messages → 空列表（不因缺字段而拒绝载入）
-        st["messages"] = _dump_messages(data.get("messages"))
+        st["messages"] = dump_messages(data.get("messages"))
+        # [050 A1] 旧会话无 last_metrics → None（/state 返回 null 而非 0.0）
+        st["last_metrics"] = _dump_metrics(data.get("last_metrics"))
         for key in ("E_prev", "B", "M_prev"):
             vec = _b64_to_vec(data.get(key))
             if vec is not None:
@@ -236,14 +267,14 @@ def load_state(data, warn=print):
             except Exception:
                 warn("[session_store] 跳过损坏的 raw_log 记录: %r" % (rid_s,))
 
-        # archiver 的包（直接写私有列表：不侵入封版模块的内部实现）
+        # archiver 的包（走公开接口，不直接写私有列表）
         pkgs = []
         for d in (data.get("packages") or []):
             try:
                 pkgs.append(_dict_to_pkg(d))
             except Exception as e:
                 warn("[session_store] 跳过损坏的记忆包: %s" % e)
-        st["archiver"]._packages = pkgs
+        st["archiver"].replace_packages(pkgs)
 
         # memory_graph 的事件（HR 与海马体竞争的数据源）
         for d in (data.get("events") or []):

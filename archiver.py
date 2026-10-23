@@ -202,6 +202,16 @@ class Archiver:
         """返回全部已归档的 MemoryPackage。"""
         return list(self._packages)
 
+    # [050 A3] 公开写入接口：会话恢复与记忆植入都不再直接改私有列表。
+    def append_package(self, pkg: MemoryPackage) -> MemoryPackage:
+        """追加一个已构造好的记忆包（记忆植入 / 外部工具用）。"""
+        self._packages.append(pkg)
+        return pkg
+
+    def replace_packages(self, pkgs) -> None:
+        """整体替换记忆包列表（从存档恢复时用）。"""
+        self._packages = [p for p in pkgs if p is not None]
+
     # [017.5 T31] 包级双向量索引（017.txt 雷点1补丁(2)，与标定探针同口径）
     # [019] 扩展第三返回值 mean_valence：包内各轮 S_valence 均值（整体极性），
     #   供读取侧极性一致性过滤（018 议题二）。

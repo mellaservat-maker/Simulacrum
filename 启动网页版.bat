@@ -10,11 +10,15 @@ set HF_HUB_VERBOSITY=error
 set TRANSFORMERS_VERBOSITY=error
 set HF_HUB_DISABLE_PROGRESS_BARS=1
 set EMOTION_OPEN_BROWSER=1
+rem [051] LAN token: change 1 to your own password
+set EMOTION_API_TOKEN=1
+rem Phone: http://YOUR-LAN-IP:8000/?token=1
 echo.
 echo ============================================================
 echo  Emotion Agent - backend + web UI (same origin)
 echo  This window IS the backend. Close it to stop the service.
-echo  Browser opens http://127.0.0.1:8000/ automatically.
+echo  Local:  http://127.0.0.1:8000/
+echo  Phone:  http://YOUR-LAN-IP:8000/?token=1
 echo ============================================================
 echo.
 rem [045] listen on 0.0.0.0 so phones in the same LAN can connect

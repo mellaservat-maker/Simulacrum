@@ -19,6 +19,7 @@
 #        （0.0.0.0 允许同一局域网的手机访问；仅本机用 127.0.0.1 亦可）
 # ============================================================
 
+import hmac
 import os
 import sys
 import threading
@@ -31,6 +32,7 @@ except ImportError:            # venv 未装 requests 时 /api/models 不可用
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 BASE = os.path.dirname(os.path.abspath(__file__))
@@ -54,6 +56,45 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ============================================================
+# [050 S2] 接口鉴权
+#   令牌来源：环境变量 EMOTION_API_TOKEN（config.EMOTION_API_TOKEN）。
+#   未设置令牌时，只有本机回环（127.0.0.1 / ::1）能访问 API，
+#   局域网请求一律 403，避免同网段任何人直接调 /chat 消耗 token。
+#   设置令牌后，请求需带 X-API-Token 头（或 ?token= 查询参数）。
+#   页面与静态资源不拦（否则手机连页面都打不开），/health 公开。
+# ============================================================
+_PUBLIC_PATHS = {"/", "/health", "/favicon.ico"}
+_LOOPBACK = ("127.0.0.1", "::1", "localhost")
+
+
+def _auth_error(status, detail):
+    resp = JSONResponse(status_code=status, content={"detail": detail})
+    # 鉴权中间件在 CORS 外层，手动补 CORS 头，避免浏览器只看到 CORS 错误
+    resp.headers["Access-Control-Allow-Origin"] = "*"
+    return resp
+
+
+@app.middleware("http")
+async def _auth_guard(request: Request, call_next):
+    path = request.url.path
+    if path in _PUBLIC_PATHS or path.startswith("/static"):
+        return await call_next(request)
+    if request.method == "OPTIONS":        # 预检请求不带自定义头，直接放行
+        return await call_next(request)
+    host = (request.client.host if request.client else "") or ""
+    # 本机回环始终放行：桌面端/脚本/探针不必带令牌（机器本身已可信）
+    if host in _LOOPBACK:
+        return await call_next(request)
+    token = (config.EMOTION_API_TOKEN or "").strip()
+    if not token:
+        return _auth_error(403, "未设置 EMOTION_API_TOKEN，仅允许本机访问")
+    got = (request.headers.get("x-api-token")
+           or request.query_params.get("token") or "")
+    if not hmac.compare_digest(got, token):
+        return _auth_error(401, "接口需要访问令牌：请在 URL 后加 ?token=...")
+    return await call_next(request)
 
 # 会话表：session_id -> st。chat_turn 内部会临时 patch
 # pipeline.get_fixture（全局），故用一把锁串行化，避免并发互相覆盖。
@@ -137,7 +178,15 @@ def _recall_text(rm, st):
 
 
 def _state_payload(st, log=None):
-    """完整状态（供 /state 与 /chat 的 state 字段）。"""
+    """完整状态（供 /state 与 /chat 的 state 字段）。
+
+    [050 A1] 未计算的字段返回 null，不再用 0.0 冒充「已计算」。
+      - 本会话从未跑过一轮：w_PFC / I_inhibit / e / e0 / action 全部 null，
+        前端显示为 "-"（而不是 0.00 / +0.00）。
+      - 跑过至少一轮但本次调用没带 log（典型就是 GET /state）：回落到
+        存档里的 last_metrics（上一轮真实计算结果），避免页面刷新后数值归零。
+    """
+    src = log if log is not None else st.get("last_metrics")
     base = {
         "round": st.get("round_counter", 0),
         "buffer": len(st["memory_buffer"]),
@@ -154,30 +203,28 @@ def _state_payload(st, log=None):
             "express_valence": float(config.POLICY_EXPRESS_VALENCE),
             "express_inhibit": float(config.POLICY_EXPRESS_INHIBIT),
         },
-        "e": [float(x) for x in st.get("E_prev", [0.0, 0.0, 0.0, 0.0])],
-        # [042] 无轮次（log is None）时也必须给出这四项，否则前端只能显示
-        #   占位值，误以为初始状态是 0.18/0.92/+0.16。
-        #   口径（042 裁决）：I_inhibit 首轮未计算，返回 0.0 = 无抑制状态；
-        #   action 取 policy 默认值与首轮默认动作一致。
-        "w_PFC": float(st.get("w_PFC", 0.0)),
-        "I_inhibit": 0.0,
-        "e0": float(st.get("E_prev", [0.0])[0]),
-        "action": "task_first",
+        # [050 A1] 未计算 → null
+        "w_PFC": None,
+        "I_inhibit": None,
+        "e0": None,
+        "e": None,
+        "action": None,
     }
-    if log is not None:
+    if src is not None:
         base.update({
-            "w_PFC": float(log["w_PFC"]),
-            "I_inhibit": float(log["I_inhibit"]),
-            "threat_now": float(log.get("threat_now", 0.0)),
-            "alpha_mode": float(log.get("alpha_mode", 0.0)),
-            "e0": float(log["E_final"][0]),
-            "e": [float(x) for x in log["E_final"]],
-            "action": log.get("action"),
-            "danger_now": float(log.get("danger_now", 0.0)),
+            "w_PFC": float(src["w_PFC"]),
+            "I_inhibit": float(src["I_inhibit"]),
+            "threat_now": float(src.get("threat_now", 0.0)),
+            "alpha_mode": float(src.get("alpha_mode", 0.0)),
+            "e0": float(src["e"][0] if "e" in src else src["E_final"][0]),
+            "e": [float(x) for x in (src.get("e") if src.get("e") is not None
+                                      else src.get("E_final", []))],
+            "action": src.get("action"),
+            "danger_now": float(src.get("danger_now", 0.0)),
             "express_cooldown": int(st.get("express_cooldown", 0)),
-            "turn_tokens": int(log.get("turn_tokens", 0)),
-            "S": [float(x) for x in log.get("S", [])],
-            "S_source": log.get("S_source"),
+            "turn_tokens": int(src.get("turn_tokens", 0)),
+            "S": [float(x) for x in (src.get("S") if src.get("S") is not None else [])],
+            "S_source": src.get("S_source"),
             "recalled": bool(st.get("recalled_memory")),
         })
     return base
@@ -245,7 +292,7 @@ def api_history(session_id: str = "default"):
         return {
             "session_id": session_id,
             "round": int(st.get("round_counter", 0)),
-            "messages": session_store._dump_messages(st.get("messages")),
+            "messages": session_store.dump_messages(st.get("messages")),
         }
 
 
@@ -307,6 +354,18 @@ def chat(body: ChatIn):
                 "state": _state_payload(st),
             }
         rm = st.get("recalled_memory")
+        # [050 A1] 把本轮真实计算结果留在会话里：GET /state 没有 log 参数，
+        #   刷新页面/切换会话时用它恢复面板，而不是把数值清零或填 0.0。
+        st["last_metrics"] = {
+            "w_PFC": float(log["w_PFC"]),
+            "I_inhibit": float(log["I_inhibit"]),
+            "e": [float(x) for x in log["E_final"]],
+            "action": log.get("action"),
+            "danger_now": float(log.get("danger_now", 0.0)),
+            "threat_now": float(log.get("threat_now", 0.0)),
+            "alpha_mode": float(log.get("alpha_mode", 0.0)),
+            "turn_tokens": int(log.get("turn_tokens", 0)),
+        }
         # [045] 聊天记录随状态一并落盘（跨浏览器/跨设备拉取同一份文字历史）。
         #   只记录成功轮次；失败轮次的兜底提示不入库，避免污染历史。
         reply_text = str(log.get("llm_output", "")).strip()

@@ -13,6 +13,8 @@
 #       快照：_snapshot_v44
 # ============================================================
 
+import os
+
 import numpy as np
 import random
 
@@ -192,6 +194,16 @@ POLICY_DANGER_BOOST_HIGH = 0.80  # [未校准] 危险度直通压制阈值
 #   这不是符号错误，是“威胁感知度决定抗压时长”的设计语义。
 #   冷切换：profile 固定到会话（state["profile_id"]），运行中不热切换。
 # ============================================================
+# [044] 网页端默认会话 ID：跨浏览器共享同一份后端记忆。
+#   前端首次打开若未通过 ?session_id= 指定，会用这个 ID 加载
+#   sessions/owner_main.json，从而在不同浏览器间续上同一段状态。
+DEFAULT_WEB_SESSION = "owner_main"
+
+# [050 S2] 接口访问令牌：从环境变量读取，不落盘、不进仓库。
+#   未设置时 /chat 等接口只允许本机回环访问（局域网请求一律拒绝）；
+#   设置后局域网请求需带 X-API-Token 头（或 ?token= 查询参数）。
+EMOTION_API_TOKEN = os.environ.get("EMOTION_API_TOKEN", "").strip()
+
 PERSONALITY_DEFAULT = "standard"
 PERSONALITY_PROFILES = {
     "standard": {
@@ -309,6 +321,12 @@ C_INIT = np.array([
 ])
 
 LAMBDA = np.array([0.9, 0.9, 0.9, 0.9])
+# [051 裁决] 情绪向零回归（OU 项）：E <- LAMBDA*E + 冲击 - GAMMA_HOME*E。
+#   作用：把「持续微小负反馈」的稳态偏移从 10 倍压到 1/(0.1+gamma) 倍。
+#   gamma=0.05 时稳态偏移约为冲击的 6.7 倍（0 时为 10 倍），停止输入后
+#   6 轮回 0.05 以内、16 轮回 0.01 以内（probe_t52 数据）。
+#   注意：这是向零回归，不是「回到个人基线」，后者是另一个公式。
+E_HOMEOSTASIS_GAMMA = 0.05                      # [未校准] 050 探针建议值，051 裁决落地
 b_i = 0.0
 GAMMA = 0.6
 TAU_DAYS = 30
@@ -451,8 +469,8 @@ assert not (set(POSITIVE_WORDS) & set(DANGER_KEYWORDS))
 # [M1 已知限制] L17 三场景 action 对随机参数敏感（同公式换种子，被夸 I_inhibit 可能在 0.4 阈值附近翻转）
 # [M1 已知限制] L18 competition_score 已接入 hippocampal_evaluator，但 persons/tasks 为空集，person_match/task_match 恒为 0（等 T3/T20）
 # [M1 已知限制] L19 EventNode 的 persons/tasks 暂为空集，event_parser 无提取能力（L2），等 T3 填充
-# [M2 已知限制] L20 归档器的 organize_narrative 为桩实现，尚未接真 LLM
-# [M2 已知限制] L21 读取侧默认关闭（MEMORY_READ_ENABLED=False），记忆暂不影响评估
+# [M2 已知限制] L20 归档器 organize_narrative 已接真 LLM（LLM_BACKEND=deepseek_official，温度 0.3）；仅在切回 mock 时才走桩分支（050 更新）
+# [M2 已知限制] L21 读取侧已开启（MEMORY_READ_ENABLED=True），记忆参与评估（050 更新）
 # [M2 已知限制] L22 时间触发归档尚未实现，当前仅按轮数触发
 # [M2 已知限制] L23 归档 emotion_value 由 LLM 事后生成，与主链路逐轮算出的情绪值口径不同；已确认为强度（0~1）+ emotion_polarity（方向），009.5 批次丁符号修正后被骂场景召回转为负向增量、D_slow 方向随之翻转；012 号工作公式定版为 emotion_value * sign（强度×方向），废弃 (v*2-1)*sign（该式在 negative 且 v<0.5 时产出正向增量，违反"negative 必须负"约束）；方向对错留待 T31 设计会议裁议
 # [M2 已知限制] L24 M1 三场景 E_final[0] 区分度极低（-0.206~-0.220），state_translator 的"感受"话术永远落在"平静"档，无法体现被骂/被夸差异

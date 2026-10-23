@@ -358,6 +358,8 @@ def run_scenario(scenario, feature_mode="fixture"):
         "HistoricalResidual": HistoricalResidual,
         "M_text": M_text,
         "action": action,
+        # [041] 观测字段：当轮复合危险度，供前端展示（不参与任何计算）
+        "danger_now": float(danger_now),
         "feature_mode": feature_mode,
         "llm_output": llm_output,
         "recalled_memory": st["recalled_memory"],
@@ -581,6 +583,8 @@ def run_turn(state, scenario, feature_mode="fixture"):
         "HistoricalResidual": HistoricalResidual,
         "M_text": M_text,
         "action": action,
+        # [041] 观测字段：当轮复合危险度，供前端展示（不参与任何计算）
+        "danger_now": float(danger_now),
         "feature_mode": feature_mode,
         "llm_output": llm_output,
         "recalled_memory": st["recalled_memory"],

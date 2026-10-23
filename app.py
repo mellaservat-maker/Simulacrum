@@ -28,8 +28,13 @@ from state import reset_state                      # noqa: E402
 from llm_client import (token_stats, token_reset,   # noqa: E402
                         LLMUnavailableError)
 from chat_cli_v6 import chat_turn                   # noqa: E402
+import config                                       # noqa: E402
 
-st.set_page_config(page_title="情绪仿生系统 v6.2", page_icon="🧠", layout="wide")
+st.set_page_config(page_title="情绪仿生系统 v6.19", page_icon="🧠", layout="wide")
+
+_PROFILE_IDS = list(config.PERSONALITY_PROFILES.keys())
+_PROFILE_NAMES = {pid: "%s（%s）" % (p.get("label", pid), pid)
+                  for pid, p in config.PERSONALITY_PROFILES.items()}
 
 
 # ---------------- 状态初始化 ----------------
@@ -66,19 +71,53 @@ def _alpha_label(a):
 def _render_sidebar():
     with st.sidebar:
         st.title("🧠 情绪雷达")
+
+        # [041] 性格预设：冷切换，改动后从下一轮起生效
+        cur_pid = st.session_state.st_core.get("profile_id", config.PERSONALITY_DEFAULT)
+        if cur_pid not in _PROFILE_IDS:
+            cur_pid = config.PERSONALITY_DEFAULT
+        pid = st.selectbox(
+            "性格预设（冷切换）",
+            _PROFILE_IDS,
+            index=_PROFILE_IDS.index(cur_pid),
+            format_func=lambda x: _PROFILE_NAMES.get(x, x),
+            help="standard 标准型 / sensitive 敏感型 / gentle 温和型；切换后下一轮生效",
+        )
+        if pid != cur_pid:
+            st.session_state.st_core["profile_id"] = pid
+            config.load_personality(pid)
+            st.caption("已切换为 %s，从下一轮起生效。" % _PROFILE_NAMES.get(pid, pid))
+
         log = st.session_state.last_log
         if log is None:
             st.info("还没有对话。发一句话，这里会实时显示内部状态。")
         else:
-            e0 = float(log["E_final"][0]) if hasattr(log["E_final"], "__len__") else float(log["E_final"])
+            e = [float(x) for x in log["E_final"]]
+            e0 = e[0]
             wp = float(log["w_PFC"])
             ii = float(log["I_inhibit"])
             th = float(log.get("threat_now", 0.0))
             al = float(log.get("alpha_mode", 0.0))
+            danger = float(log.get("danger_now", 0.0))
+            action = str(log.get("action", "-"))
+            cooldown = int(st.session_state.st_core.get("express_cooldown", 0))
+
+            # [041] 破防视觉：express 用红色告警，冷却中显示剩余轮数
+            if action == "express":
+                st.error("💥 破防 · express（本轮情绪爆发）")
+            if cooldown > 0:
+                st.warning("❄️ 冷却中（剩余 %d 轮）" % cooldown)
 
             c1, c2 = st.columns(2)
             c1.metric("当前情绪 E[0]", "%+.3f" % e0, help="负=难受 / 正=舒服")
-            c2.metric("本轮动作", str(log.get("action", "-")))
+            c2.metric("本轮动作", action)
+
+            # [041] 四维情绪
+            st.caption("四维情绪（E[0] 效价 / E[1] 唤醒 / E[2] 掌控 / E[3] 焦虑）")
+            labels = ["效价 E[0]", "唤醒 E[1]", "掌控 E[2]", "焦虑 E[3]"]
+            for name, val in zip(labels, e):
+                st.progress(min(max((val + 1) / 2, 0.0), 1.0),
+                            text="%s  %+.3f" % (name, val))
 
             st.caption("疲劳值 w_PFC（1.0=防线极限）")
             st.progress(min(max(wp, 0.0), 1.0), text="%.3f" % wp)
@@ -88,6 +127,14 @@ def _render_sidebar():
             st.progress(min(max(th, 0.0), 1.0), text="%.3f" % th)
             st.caption("模式 alpha（%s）" % _alpha_label(al))
             st.progress(min(max(al, 0.0), 1.0), text="%.3f" % al)
+
+            # [041] 危险度与策略阈值
+            st.metric("危险度 danger_now", "%+.3f" % danger)
+            st.caption("阈值：MID %.2f ｜ suppress %.2f ｜ express I<%.2f 且 E0<%.2f"
+                       % (config.POLICY_THRESHOLD_INHIBIT_MID,
+                          config.POLICY_THRESHOLD_INHIBIT_HIGH,
+                          config.POLICY_EXPRESS_INHIBIT,
+                          config.POLICY_EXPRESS_VALENCE))
 
             rm = st.session_state.st_core.get("recalled_memory")
             if isinstance(rm, dict) and rm.get("recall_source") not in (None, "package_level"):
@@ -131,7 +178,8 @@ def _state_markdown():
     log = st.session_state.last_log
     if log is None:
         return "**还没有对话轮次**——先聊一句，再看 /state。"
-    e0 = float(log["E_final"][0]) if hasattr(log["E_final"], "__len__") else float(log["E_final"])
+    e = [float(x) for x in log["E_final"]]
+    e0 = e[0]
     det = (st_core.get("recalled_memory") or {}).get("recall_detail") or {}
     stats = token_stats()
     lines = [
@@ -140,9 +188,17 @@ def _state_markdown():
         "| 指标 | 值 | 判读 |",
         "|---|---|---|",
         "| 轮次 | %d | — |" % st_core.get("round_counter", 0),
+        "| 性格预设 | %s | 会话级冷切换 |" % _PROFILE_NAMES.get(
+            st_core.get("profile_id", "standard"), "-"),
         "| 当前情绪 E[0] | %+.4f | 负=难受 / 正=舒服 |" % e0,
+        "| 四维 E[1] 唤醒 | %+.4f | — |" % e[1],
+        "| 四维 E[2] 掌控 | %+.4f | — |" % e[2],
+        "| 四维 E[3] 焦虑 | %+.4f | — |" % e[3],
         "| 疲劳值 w_PFC | %.4f | 1.0=防线极限 |" % float(log["w_PFC"]),
         "| 理智防线 I | %.4f | 1.0=满血 |" % float(log["I_inhibit"]),
+        "| 危险度 danger_now | %+.4f | 复合危险度 |" % float(log.get("danger_now", 0.0)),
+        "| 破防冷却 | %d 轮 | >0 时不重复 express |"
+        % int(st_core.get("express_cooldown", 0)),
         "| 威胁感 threat | %.4f | max(上轮D_error, HR, -S_val) |" % float(log.get("threat_now", 0.0)),
         "| 模式 alpha | %.4f | %s |" % (float(log.get("alpha_mode", 0.0)),
                                         _alpha_label(float(log.get("alpha_mode", 0.0)))),
@@ -173,7 +229,7 @@ def _typewriter(text, delay=0.012):
 # ---------------- 主区域 ----------------
 
 st.title("🧠 情绪仿生系统 · 对话")
-st.caption("V6.2 主链路 · 复合危险度 + 极性一致性过滤 · 输入 /state 看上帝视角")
+st.caption("V6.19 主链路 · 四维情绪 + 性格预设 + 破防冷却 · 输入 /state 看上帝视角")
 
 _render_sidebar()
 
@@ -206,10 +262,15 @@ if prompt:
                 log, S, src = chat_turn(st.session_state.st_core, text)
             reply = str(log.get("llm_output", "")).strip()
             st.write_stream(_typewriter(reply))
-            st.caption("E=%+.3f | w_PFC=%.3f | I=%.3f | alpha=%.3f | %s | Token: %d"
-                       % (float(log["E_final"][0]), float(log["w_PFC"]),
+            st.caption("E=%+.3f | 四维 [%+.2f, %+.2f, %+.2f, %+.2f] | w_PFC=%.3f | I=%.3f | alpha=%.3f | %s | 冷却 %d | Token: %d"
+                       % (float(log["E_final"][0]),
+                          float(log["E_final"][1]), float(log["E_final"][2]),
+                          float(log["E_final"][3]),
+                          float(log["w_PFC"]),
                           float(log["I_inhibit"]), float(log.get("alpha_mode", 0.0)),
-                          log.get("action", "-"), int(log.get("turn_tokens", 0))))
+                          log.get("action", "-"),
+                          int(st.session_state.st_core.get("express_cooldown", 0)),
+                          int(log.get("turn_tokens", 0))))
             st.session_state.last_log = log
             st.session_state.turn_tokens.append(int(log.get("turn_tokens", 0)))
             st.session_state.messages.append(

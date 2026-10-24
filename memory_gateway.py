@@ -50,7 +50,7 @@ class RecallResult:
 
 
 def recall(query_text, event, memory_graph, x, B_xg, now, state,
-           round_counter, now_valence=None):
+           round_counter, now_valence=None, gap_days=0.0):
     """统一检索入口。
 
     参数:
@@ -61,6 +61,8 @@ def recall(query_text, event, memory_graph, x, B_xg, now, state,
       state          运行态（取 archiver/decompressor）
       round_counter  本轮轮次号（包龄计算用）
       now_valence    本轮 S 效价（包级极性过滤用）
+      gap_days       [055] 距上次会话保存的真实天数（跨天时间感；
+                     0 = 连续会话或首次加载）
 
     返回:
       RecallResult(hippo=事件级结果, recalled=包级结果或 None)
@@ -70,7 +72,8 @@ def recall(query_text, event, memory_graph, x, B_xg, now, state,
       - 包级仅在 MEMORY_READ_ENABLED 且存在已归档包时调用；
         其余情况 recalled=None（与旧 pipeline 的 gating 相同）。
     """
-    hippo = hippocampal_evaluate(event, memory_graph, x, B_xg, now)
+    hippo = hippocampal_evaluate(event, memory_graph, x, B_xg, now,
+                                 gap_days=gap_days)
 
     recalled = None
     if config.MEMORY_READ_ENABLED:

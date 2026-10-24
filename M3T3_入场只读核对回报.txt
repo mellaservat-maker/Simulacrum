@@ -1,0 +1,179 @@
+M3-T3 入场只读核对回报
+
+日期：2026-10-07
+执行方：新入场开发 AI
+依据：新开发 AI 入场交接卡（项目顾问撰写，所有者转交）
+约束：本轮只读核对，未修改、未新建、未运行任何项目代码文件
+状态：核对完成，已停手，等待顾问裁决
+
+
+一、核对范围
+
+1. 计算 d:\aiqg\emotion_agent 下全部 .py 文件的 SHA256 前 16 位
+2. 排除项：secrets_local.py、__pycache__
+3. 参与核对的 .py 文件数：59
+4. 比对基准：M3T3_第一阶段_完成回报.txt 中的 V4.4 封版基准明细表
+5. 另行比对：d:\aiqg\emotion_agent_snapshot_v44
+
+
+二、基准表比对结果
+
+1. 基准表条目数：55
+2. 逐条比对结果：55 条全部一致
+3. 不一致的文件：无
+4. 工作目录 59 个 .py 的构成：基准 55 个 + M3 阶段新增 4 个
+
+M3 阶段新增、基准表未覆盖的 4 个文件：
+
+  528806BDAD7CBCBF  embedder.py
+  C2A9032BB68FD94D  scripts/probe_embedder.py
+  35E8E6583CF88AC0  scripts/probe_planC.py
+  0A2547C197C2AAB3  scripts/probe_v_inputs.py
+
+其余 55 个文件的工作目录实测哈希，与基准表逐条相同：
+
+  F7B5AFB2D121B4C8  archiver.py
+  9466A353AEB269AA  config.py
+  C2D21C7D882F278E  decompressor.py
+  5C3B62AE2F1F2116  emotion.py
+  98FC7D769E003194  emotion_releaser.py
+  BD7F71EAB7F1264C  event_parser.py
+  25D837BF496060BD  fast_path.py
+  7E960C11F2D54FD3  feature_encoder.py
+  4B7317DE2B03F7CF  hippocampal_evaluator.py
+  F594D53EDADBC353  intercept.py
+  A2ADA2B77F02C4D1  llm_client.py
+  76A179D173979B1D  logger.py
+  A580118515DBF54C  main.py
+  FD7FB1058E22F8D9  memory_graph.py
+  6C2978D1A872E615  multimodal.py
+  EDC1F26A8720584B  pipeline.py
+  0E541AF602A60E9A  policy.py
+  15DE0D3EEA9C8D1E  prompt_builder.py
+  29F66391403E9A99  raw_log.py
+  1EFEA80C332E6E09  schemas.py
+  6012DC2F7211622E  short_term_buffer.py
+  34540EF43E1CE240  slow_path.py
+  BD6E89D417F737AA  state.py
+  A5F0552D2E5DC3A8  state_translator.py
+  694FCCDA9BDB885E  xinguang.py
+  E3B0C44298FC1C14  tests/__init__.py
+  D8E676625B5CF4CE  tests/fixtures.py
+  78C9F71F0B205E74  tests/test_feature_encoder.py
+  84B3B1B3D0A5C2DB  tests/test_full_pipeline_smoke.py
+  F065D29062FB22C4  tests/test_limits.py
+  7AEC84A7DD93A329  tests/test_memory_writeback.py
+  E17BAAE10E8F5D9D  tests/test_policy.py
+  1CCE50D6E6CE7FD7  tests/test_reproducibility.py
+  D2D18FB14DC5C3FC  tests/test_schemas.py
+  EA455B944D06CD29  tests/test_three_scenarios.py
+  4BA3C4DE6087DFC9  scripts/auto_chat.py
+  BC4AE2CC74AC004E  scripts/chat_cli.py
+  A7D263E1283AC1CE  scripts/probe_archiver.py
+  AFB82DE983DA51F3  scripts/probe_buffer.py
+  0A0198EFC4C01F75  scripts/probe_decompressor.py
+  F3D98A8BF2CBB815  scripts/probe_heuristic_change.py
+  EAF7273548E74E36  scripts/probe_llm_switch.py
+  929FE0AB2D0F6FBF  scripts/probe_memory_pipeline.py
+  A7BBDD669EB83309  scripts/probe_numeric.py
+  710BBFDEE7B8500B  scripts/probe_prompt_render.py
+  215721FABD15DBC9  scripts/probe_rank_divergence.py
+  D59C497E50CECD0D  scripts/probe_read_side.py
+  4A649C7711B2CF4A  scripts/probe_real_prompt.py
+  D8FD1862844A2FA7  scripts/probe_recall_with_history.py
+  C6CDF2734DDAB988  scripts/probe_session.py
+  7C79AA917181A972  scripts/probe_v43_realstate.py
+  6F08E5A422AC8DC4  scripts/probe_xinguang.py
+  70D7B9EF08A04C12  scripts/probe_xinguang_budget.py
+  E00CD6BEEBDD0D39  scripts/run_real_llm_check.py
+  CA05A989743DE7F2  scripts/verify_scenarios.py
+
+
+三、工作目录与 snapshot_v44 的差异
+
+1. .py 文件：快照 55 个，工作目录 59 个
+2. 双方共有的 55 个 .py，哈希逐条比对全部一致
+3. 快照没有工作目录缺失的 .py
+4. 差异仅为工作目录多出第二节所列的 4 个 M3 新增文件
+
+非 .py 文件差异，均为快照没有、工作目录有：
+
+  1. M3 阶段回报 9 个 .txt
+     M3A1_只读侦察回报.txt
+     M3A1_第三步V输入信号侦察回报.txt
+     M3A1_第二步设计方案回报.txt
+     M3T3_第一步只读侦察回报.txt
+     M3T3_第一阶段_完成回报.txt
+     M3T3_第一阶段_环境与选型_待裁决.txt
+     M3T3_第二步只读侦察回报.txt
+     T26第一步信号盘点回报.txt
+     V4_4封版回报.txt
+
+  2. 文档 4 个
+     全链路图.md
+     问题审查报告.md
+     项目交接说明.md
+     docs/M3A1_设计.md
+
+  3. 脚本与配置 2 个
+     run_with_venv.bat
+     secrets_local.py
+
+  4. logs 目录
+     快照无 logs 目录
+     工作目录 logs 下有 8 个产物文件，按快照排除规则本就应排除
+
+
+四、密钥合规确认
+
+1. secrets_local.py 未进入 snapshot_v44
+2. secrets_local.py 不在本回报中回显
+3. 本轮全程未读取 secrets_local.py 内容
+
+
+五、T3-B 落地现状确认
+
+以下五处均确认尚未改动，与交接卡所述第二阶段未开工一致：
+
+1. config.py 第 24 行仍为  n, n_f, m, k, c = 8, 4, 8, 4, 4
+2. config.py 第 41 至 44 行的 w_s、u_s、W_v、U_v 仍为 8 维
+3. state.py 第 29 行仍为  M_prev = np.zeros(8)
+4. event_parser.py 第 47 行仍调用 hash_to_8d
+5. state.py 之外的嵌入替换尚未发生
+
+另确认 tests/test_three_scenarios.py 当前哈希为 EA455B944D06CD29，与基准表一致。
+
+
+六、TODO_REVIEW 待顾问裁决事项
+
+事项 1：基准表计数自相矛盾
+
+  M3T3_第一阶段_完成回报.txt 正文写「V4.4 基准的 54 个 .py 文件」
+  但该文件明细表实际列出 55 行
+  且 snapshot_v44 实际也确有 55 个 .py
+  本轮按 55 核对，结果为全部一致
+  请裁决基准数应为 55，还是明细表多列了 1 行
+
+事项 2：4 个 M3 新增文件未入基准表
+
+  embedder.py、scripts/probe_embedder.py、scripts/probe_planC.py、scripts/probe_v_inputs.py
+  若后续快照以现有基准表为准，这 4 个文件的改动将无基准可查
+  请裁决是否需要将其补入基准表
+
+事项 3：pre_t3b 快照尚未创建
+
+  交接卡将「执行前先做快照 d:\aiqg\emotion_agent_snapshot_pre_t3b\」列在执行阶段
+  本轮为只读核对，未创建
+  请裁决是否现在创建
+
+事项 4：config.py 头注释与版本记录矛盾
+
+  config.py 第 2 行仍写 V4.2 · M1 冻结参数
+  与第 6 至 14 行的版本记录 V4.4 矛盾
+  该文件属 T3-B 清单内文件，但此项改动不在 T3-B 清单中
+  我不触碰，等裁决
+
+
+七、一句话结论
+
+工作目录与 V4.4 封版基准、与 snapshot_v44 的 .py 文件哈希全部一致，无任何既有代码被改动；T3-B 五处改动确认尚未落地；发现 4 项需顾问裁决事项；已停手，未动任何文件。

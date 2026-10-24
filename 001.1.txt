@@ -1,0 +1,275 @@
+本文件属于 001 号工作。
+
+001 号工作：M3-T3B 收尾执行（V4.5 封版）
+
+日期：2026-10-07
+执行方：新入场开发 AI
+依据：所有者转达的裁决结果「T3-B 主体通过，请做以下收尾」
+状态：四项任务全部执行完毕，已停手等待裁决
+
+
+零、本次工作产出文件清单
+
+汇报类（按001.N.txt 命名）：
+
+  001.1.txt
+    本文件。M3-T3B 收尾执行回报。
+    路径：d:\aiqg\emotion_agent\001.1.txt
+
+产物类（不参与编号，保持原名）：
+
+  V45_hash基准.txt
+    V4.5 全部 .py 的 SHA256 前 16 位基准表，60 条。
+    路径：d:\aiqg\emotion_agent\V45_hash基准.txt
+
+  d:\aiqg\emotion_agent_snapshot_v45\
+    V4.5 快照目录，111 个文件（含 60 个 .py）。
+    已排除 logs、__pycache__、.pytest_cache、secrets_local.py。
+
+说明：
+  本次工作只产出上述 1 个汇报类文件，故只有 001.1.txt，无 001.2.txt。
+  上一轮中断时曾按已作废的旧命名规则生成过 002.2_M3T3B_改动前_hash基准.txt，
+  该文件已删除。其数据来源为 pre_t3b 快照，内容与 M3T3B_改动前_hash基准.txt 一致，
+  未丢失任何基准数据。
+
+
+一、任务 1：修 tests/test_schemas.py 的 test_dimensions
+
+  改动处原文（第 14 至 18 行）：
+
+    14	
+    15	# T3-B：M 维度由 8 改为 1024（语义嵌入接入）
+    16	def test_dimensions():
+    17	    assert n == 8 and m == 1024 and k == 4 and c == 4 and n_f == 4
+    18	
+
+  与指令逐项对照：
+    断言 m == 8 改为 m == 1024，已改
+    函数上方加注释「# T3-B：M 维度由 8 改为 1024（语义嵌入接入）」，已加
+    n、k、c、n_f 保持原值未动
+
+  文件改动前哈希：D2D18FB14DC5C3FC
+  文件改动后哈希：3412C5CB42284985
+
+
+二、任务 2：登记四条
+
+  改动一，config.py 已知限制区，第 153 至 155 行：
+
+    153	# [M3 已知限制] L25 config.py 头注释（第 2 行）仍写「V4.2 · M1 冻结参数」，与上方版本记录 V4.4 不一致；本次仅登记，不夹带修改（等 T27）
+    154	# [M3 已知限制] L26 test_config_seed_frozen 用系统 python 调子进程（缺 numpy），与 T3-B 无关，既存问题
+    155	# [M3 已知限制] L27 fixture 模式硬编码 x 为 M1 时代 8 维 M 设计，T3-B 后与新 M（1024）不匹配，结果不可信；fixture 仅作不崩溃冒烟
+
+  改动二，config.py M2 TODO 区，第 186 至 188 行：
+
+    186	# [M3 TODO] T27 修正 config.py 头注释版本号（第 2 行仍写 V4.2，与版本记录 V4.4 矛盾），依赖 L25
+    187	# [M3 TODO] T28 统一修复测试用系统 python 而非 venv 的问题（L26）
+    188	# [M3 TODO] T29 重做 fixture 使 x 适配 1024 维 M，或废弃 fixture 模式（L27）
+
+  四条内容与指令给定文本逐字一致，未增删。
+
+  config.py 改动前哈希：9466A353AEB269AA
+  config.py 改动后哈希：18A9C215DE01C276
+
+
+三、任务 3：重跑验证
+
+  3.1 pytest
+
+  运行命令：run_with_venv.bat -m pytest tests\ -v
+  退出码：1
+
+  ============================= test session starts =============================
+  platform win32 -- Python 3.10.11, pytest-9.1.1, pluggy-1.6.0 -- d:\aiqg\venv\Scripts\python.exe
+  cachedir: .pytest_cache
+  rootdir: d:\aiqg\emotion_agent
+  plugins: anyio-4.15.1
+  collecting ... collected 15 items
+
+  tests/test_feature_encoder.py::test_empty_text PASSED                    [  6%]
+  tests/test_feature_encoder.py::test_punctuation_only PASSED              [ 13%]
+  tests/test_feature_encoder.py::test_zuobuhao_not_misjudged PASSED        [ 20%]
+  tests/test_feature_encoder.py::test_task_relevance PASSED                [ 26%]
+  tests/test_full_pipeline_smoke.py::test_encoder_mode_no_crash PASSED     [ 33%]
+  tests/test_limits.py::test_clip_bounds PASSED                            [ 40%]
+  tests/test_memory_writeback.py::test_danger_score_formula PASSED         [ 46%]
+  tests/test_policy.py::test_policy_priority PASSED                        [ 53%]
+  tests/test_reproducibility.py::test_config_seed_frozen FAILED            [ 60%]
+  tests/test_schemas.py::test_hippocampal_field_name PASSED                [ 66%]
+  tests/test_schemas.py::test_dimensions PASSED                            [ 73%]
+  tests/test_schemas.py::test_weight_lengths PASSED                        [ 80%]
+  tests/test_schemas.py::test_keyword_intersection PASSED                   [ 86%]
+  tests/test_schemas.py::test_event_embedding_field PASSED                 [ 93%]
+  tests/test_three_scenarios.py::test_action_expectations SKIPPED (M1 ...) [100%]
+
+  =============================== FAILURES ===================================
+  ___________________________ test_config_seed_frozen ___________________________
+
+      def test_config_seed_frozen():
+          env = dict(os.environ)
+          env["PYTHONPATH"] = ROOT
+  >       r1 = subprocess.check_output(
+              ["python", "-c", "from config import w_s; print(w_s.tolist())"],
+              cwd=ROOT, env=env,
+          ).decode().strip()
+
+  tests\test_reproducibility.py:15:
+  E               subprocess.CalledProcessError: Command '['python', '-c', 'from config import w_s; print(w_s.tolist())']' returned non-zero exit status 1.
+
+  C:\Python310\lib\subprocess.py:526: CalledProcessError
+  ---------------------------- Captured stderr call -----------------------------
+  Traceback (most recent call last):
+    File "<string>", line 1, in <module>
+    File "d:\aiqg\emotion_agent\config.py", line 16, in <module>
+      import numpy as np
+  ModuleNotFoundError: No module named 'numpy'
+  =========================== short test summary info ============================
+  FAILED tests/test_reproducibility.py::test_config_seed_frozen - subprocess.Ca...
+  ================== 1 failed, 13 passed, 1 skipped in 34.32s ===================
+
+  与裁决目标比对：
+    裁决目标  13 passed, 1 skipped, 1 failed
+    实际结果  13 passed, 1 skipped, 1 failed
+    达标
+
+  唯一失败项 test_config_seed_frozen 的原因即本次新登记的 L26：
+    该测试用裸命令 python 调起子进程，走的是系统解释器 C:\Python310\python.exe，
+    该解释器未安装 numpy，导致子进程 import config 即失败。
+    与 T3-B 无关，是既存问题（L26 / T28）。按裁决未修。
+
+  3.2 main.py
+
+  第一次运行失败，如实记录：
+
+    Traceback (most recent call last):
+      File "C:\Python310\lib\http\client.py", line 952, in connect
+        self._tunnel()
+      File "C:\Python310\lib\http\client.py", line 925, in _tunnel
+        raise OSError(f"Tunnel connection failed: {code} {message.strip()}")
+    OSError: Tunnel connection failed: 502 Bad Gateway
+
+    During handling of the above exception, another exception occurred:
+
+    Traceback (most recent call last):
+      File "d:\aiqg\emotion_agent\main.py", line 58, in <module>
+        sys.exit(main())
+      File "d:\aiqg\emotion_agent\main.py", line 21, in main
+        log = run_scenario(sc, feature_mode="fixture")
+      File "d:\aiqg\emotion_agent\pipeline.py", line 115, in run_scenario
+        llm_output = get_llm().generate(prompt)
+      File "d:\aiqg\emotion_agent\llm_client.py", line 68, in generate
+        with urllib.request.urlopen(req, timeout=60) as resp:
+      File "C:\Python310\lib\urllib\request.py", line 216, in urlopen
+        return opener.open(url, data, timeout)
+    urllib.error.URLError: <urlopen error Tunnel connection failed: 502 Bad Gateway>
+
+    失败原因：调用 DeepSeek LLM 时经系统代理 127.0.0.1:7890 转发，代理返回 502 Bad Gateway。
+    这是问题审查报告 4.9 记录的既存环境问题，与本次改动无关。
+
+  第二次重试成功，输出如下：
+
+    ================================================================================
+    M1 三场景验收 ·fixture 模式
+    ================================================================================
+    被骂     action=suppress     expected=suppress     PASS
+    被夸     action=reappraise   expected=task_first   FAIL
+    被质疑    action=reappraise   expected=reappraise   PASS
+    --------------------------------------------------------------------------------
+    fixture 验收：失败
+
+    ================================================================================
+    M1 encoder 模式冒烟（不断言 action，只检查字段完整）
+    ================================================================================
+    被骂     冒烟通过（action=suppress）
+    被夸     冒烟通过（action=task_first）
+    被质疑    冒烟通过（action=reappraise）
+    --------------------------------------------------------------------------------
+    encoder 冒烟：全部通过
+
+    M1 总验收：失败
+
+  与 002 轮 T3-B 主体执行时的记录对比：
+    被骂 suppress，被夸 reappraise，被质疑 reappraise
+    encoder 模式三场景冒烟全通过
+    结果与上次完全一致，无新增变化
+
+  按裁决「如实记录，不修」，未做任何处理。
+
+
+四、任务 4：V4.5 快照
+
+  4.1 快照
+
+    路径：d:\aiqg\emotion_agent_snapshot_v45\
+    文件总数：111（已排除 __pycache__）
+    .py 文件数：60
+
+    排除项实测核对：
+      secrets_local.py：0 个
+      logs 目录：0 个
+      __pycache__ 目录：0 个
+      .pytest_cache 目录：0 个
+
+    快照内 60 个 .py 与工作目录逐条比对：全部一致，无差异项。
+
+  4.2 快照文件数
+
+    111 个（其中 .py 文件 60 个）
+
+  4.3 V45_hash基准.txt
+
+    路径：d:\aiqg\emotion_agent\V45_hash基准.txt
+    算法：SHA256，取前 16 位，大写
+    排序：按文件名字母序
+    文件总数：60
+    完整 60 条内容见该文件，此处不重复抄录。
+
+
+五、hash 对比
+
+  本次相对 T3-B 改动前基准（M3T3B_改动前_hash基准.txt，59 条）的差异：
+
+  改动 5 个文件：
+
+    config.py
+      改前 9466A353AEB269AA
+      改后 18A9C215DE01C276
+
+    event_parser.py
+      改前 BD7F71EAB7F1264C
+      改后 BFFC141291CB680C
+
+    state.py
+      改前 BD6E89D417F737AA
+      改后 979E1427716F8277
+
+    tests/test_schemas.py
+      改前 D2D18FB14DC5C3FC
+      改后 3412C5CB42284985
+
+    tests/test_three_scenarios.py
+      改前 EA455B944D06CD29
+      改后 C41959EAC1B35013
+
+  新增 1 个文件：
+
+    scripts/probe_t3b_smoke.py
+      807F17B4A25AA54E
+
+  其余 54 个 .py 与基准逐条一致，无任何改动。
+
+  禁区文件核对，全部未改动：
+    slow_path.py 34540EF43E1CE240
+    hippocampal_evaluator.py 4B7317DE2B03F7CF
+    xinguang.py 694FCCDA9BDB885E
+    feature_encoder.py 7E960C11F2D54FD3
+    embedder.py 528806BDAD7CBCBF
+
+  未改动任何其他文件。未使用 try/except 掩盖错误。
+
+
+六、一句话结论
+
+  完成：四项收尾任务全部执行完毕，pytest 达到裁决目标 13 passed / 1 skipped / 1 failed
+  （唯一失败为已登记 L26 的既存问题），V4.5 快照已建（111 个文件、60 个 .py、
+  排除项实测为零），V45_hash基准.txt 已由脚本直写并通过 diff 自校验。

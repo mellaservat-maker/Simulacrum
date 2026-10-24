@@ -1,0 +1,444 @@
+M3-T3 第一阶段 完成回报：环境准备 + 可插拔 embedder
+日期：2026-10-06
+状态：等待裁决
+约束：只新建文件，未修改任何现有 .py 文件
+
+
+1. 任务清单与完成情况
+
+1.1 建独立虚拟环境（D 盘）—— 完成
+1.2 安装支持 sm_120 的 torch 与 sentence-transformers —— 完成
+1.3 GPU 真验证（张量运算）—— 完成
+1.4 新建 embedder.py（HashEmbedder + BGEEmbedder + get_embedder）—— 完成
+1.5 新建 scripts/probe_embedder.py 并运行验证 —— 完成，全部断言通过
+1.6 新建 run_with_venv.bat —— 完成
+1.7 核对未改动现有 .py 文件 —— 完成，54 个基准文件 hash 全部一致
+
+
+2. 虚拟环境
+
+路径：d:\aiqg\venv
+Python：3.10.11（64 位）
+解释器：d:\aiqg\venv\Scripts\python.exe
+
+缓存目录：
+HF_HOME       = d:\aiqg\hf_cache
+PIP_CACHE_DIR = d:\aiqg\pip_cache
+HF_ENDPOINT   = https://hf-mirror.com
+
+
+3. 关键依赖版本（pip list 节选）
+
+torch                 2.12.1+cu130
+torchvision 未安装（本阶段不需要）
+sentence-transformers 6.1.0
+transformers          5.18.0
+huggingface_hub       1.33.0
+tokenizers            0.23.2
+safetensors           0.8.0
+numpy                 2.2.6
+scipy                 1.15.3
+scikit-learn          1.7.2
+filelock              4.0.12
+PyYAML                6.0.3
+regex                 2026.9.29
+tqdm                  4.70.1
+Jinja2                3.1.6
+（完整清单见附录 A）
+
+
+4. GPU 真验证
+
+命令：在 venv 中执行 torch 张量加法并同步
+
+输出：
+torch: 2.12.1+cu130
+CUDA available: True
+CUDA version: 13.0
+Device: NVIDIA GeForce RTX 5060 Laptop GPU
+Capability: (12, 0)
+Result: [5.0, 7.0, 9.0]
+GPU OK
+
+结论：
+- CUDA 可用，算力 (12, 0) 即 sm_120，与 RTX 5060 匹配，torch cu130 内核可用。
+- 张量在 GPU 上完成加法，结果 [5.0, 7.0, 9.0] 正确，torch.cuda.synchronize() 未报错。
+- GPU 真验证通过。
+
+
+5. 新建文件清单（本阶段）
+
+d:\aiqg\emotion_agent\embedder.py
+d:\aiqg\emotion_agent\scripts\probe_embedder.py
+d:\aiqg\emotion_agent\run_with_venv.bat
+
+三者均为新建，未触碰任何现有 .py 文件。
+
+
+6. embedder.py 完整原文
+
+# ============================================================
+# embedder.py · V4.5 · 可插拔嵌入器（M3-T3 第一阶段）
+# 只新建，不改动任何现有 .py 文件
+# 接口：
+#   get_embedder(name="bge") 工厂函数
+#   每个实例有 dim 属性与 encode(texts) 方法
+#   HashEmbedder：复刻 event_parser.hash_to_8d 的 8 维 hash
+#   BGEEmbedder ：BGE-Large-zh-v1.5，1024 维，懒加载，GPU 优先
+# 默认后端：BGE
+# ============================================================
+
+import hashlib
+
+import numpy as np
+
+
+class HashEmbedder:
+    """复刻 event_parser.hash_to_8d 的 8 维 hash 嵌入，输出必须完全一致。"""
+
+    dim = 8
+
+    def encode(self, texts):
+        single = isinstance(texts, str)
+        items = [texts] if single else list(texts)
+        vecs = np.stack([self._hash_to_8d(t) for t in items])
+        return vecs[0] if single else vecs
+
+    @staticmethod
+    def _hash_to_8d(raw_text):
+        h = hashlib.md5(raw_text.encode()).digest()
+        vec = np.array([h[i] / 255.0 for i in range(8)])
+        return vec / (np.linalg.norm(vec) + 1e-8)
+
+
+class BGEEmbedder:
+    """BGE-Large-zh-v1.5 语义嵌入，1024 维，懒加载，GPU 优先。"""
+
+    dim = 1024
+    MODEL_NAME = "BAAI/bge-large-zh-v1.5"
+
+    def __init__(self, model_name=None, device=None):
+        self.model_name = model_name or self.MODEL_NAME
+        self.device = device
+        self._model = None
+
+    def _load(self):
+        if self._model is not None:
+            return
+        import torch
+        from sentence_transformers import SentenceTransformer
+
+        if self.device is None:
+            self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self._model = SentenceTransformer(self.model_name, device=self.device)
+
+    def encode(self, texts):
+        self._load()
+        single = isinstance(texts, str)
+        items = [texts] if single else list(texts)
+        vecs = self._model.encode(
+            items, normalize_embeddings=True, convert_to_numpy=True
+        )
+        return vecs[0] if single else vecs
+
+
+def get_embedder(name="bge"):
+    """工厂函数，默认后端为 BGE。"""
+    key = (name or "bge").lower()
+    if key in ("bge", "bge-large", "bge-large-zh-v1.5"):
+        return BGEEmbedder()
+    if key in ("hash", "hash8", "hash_to_8d"):
+        return HashEmbedder()
+    raise ValueError(f"Unknown embedder name: {name}")
+
+
+7. scripts/probe_embedder.py 完整原文
+
+# ============================================================
+# scripts/probe_embedder.py · M3-T3 第一阶段探针
+# 验证可插拔 embedder：维度、语义区分度、hash 兼容性
+# ============================================================
+
+import os
+import sys
+
+import numpy as np
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
+
+from embedder import get_embedder
+from event_parser import hash_to_8d
+
+
+def cosine(a, b):
+    a = np.asarray(a, dtype=float)
+    b = np.asarray(b, dtype=float)
+    return float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b) + 1e-12))
+
+
+def main():
+    bge = get_embedder("bge")
+    hash_emb = get_embedder("hash")
+
+    print("=== 1. 维度 ===")
+    print("get_embedder('bge').dim  =", bge.dim)
+    print("get_embedder('hash').dim =", hash_emb.dim)
+
+    t1 = "你真蠢"
+    t2 = "你太笨了"
+    t3 = "今天天气真好"
+
+    print()
+    print("=== 2. 编码三组文字 ===")
+    v1 = bge.encode(t1)
+    v2 = bge.encode(t2)
+    v3 = bge.encode(t3)
+    print("encode('%s') shape = %s" % (t1, np.asarray(v1).shape))
+    print("encode('%s') shape = %s" % (t2, np.asarray(v2).shape))
+    print("encode('%s') shape = %s" % (t3, np.asarray(v3).shape))
+
+    print()
+    print("=== 3. 两两 cosine ===")
+    c_near = cosine(v1, v2)
+    c_far = cosine(v1, v3)
+    print("cosine(%s, %s) = %.6f   (预期 > 0.7)" % (t1, t2, c_near))
+    print("cosine(%s, %s) = %.6f   (预期 < 0.5)" % (t1, t3, c_far))
+
+    print()
+    print("=== 4. 断言 ===")
+    assert c_near > 0.7, "近义对相似度应 > 0.7，实际 %.6f" % c_near
+    assert c_far < 0.5, "远义对相似度应 < 0.5，实际 %.6f" % c_far
+    assert c_near > c_far, "近义对相似度应大于远义对"
+    print("近义 > 0.7 : PASS")
+    print("远义 < 0.5 : PASS")
+    print("前者 > 后者 : PASS")
+
+    print()
+    print("=== 5. hash 兼容性（逐元素一致）===")
+    h_now = np.asarray(hash_emb.encode(t1))
+    h_ref = np.asarray(hash_to_8d(t1))
+    print("embedder.encode('%s') = %s" % (t1, h_now.tolist()))
+    print("event_parser.hash_to_8d('%s') = %s" % (t1, h_ref.tolist()))
+    assert np.array_equal(h_now, h_ref), "hash embedder 与 event_parser.hash_to_8d 不一致"
+    print("逐元素完全一致 : PASS")
+
+    print()
+    print("全部断言通过")
+
+
+if __name__ == "__main__":
+    main()
+
+
+8. 探针运行输出（原文，exit code 0）
+
+=== 1. 维度 ===
+get_embedder('bge').dim  = 1024
+get_embedder('hash').dim = 8
+
+=== 2. 编码三组文字 ===
+encode('你真蠢') shape = (1024,)
+encode('你太笨了') shape = (1024,)
+encode('今天天气真好') shape = (1024,)
+
+=== 3. 两两 cosine ===
+cosine(你真蠢, 你太笨了) = 0.820723   (预期 > 0.7)
+cosine(你真蠢, 今天天气真好) = 0.311921   (预期 < 0.5)
+
+=== 4. 断言 ===
+近义 > 0.7 : PASS
+远义 < 0.5 : PASS
+前者 > 后者 : PASS
+
+=== 5. hash 兼容性（逐元素一致）===
+embedder.encode('你真蠢') = [0.08176445861929466, 0.08176445861929466, 0.6219939173539201, 0.3095368790587584, 0.3212175160043719, 0.560670573389449, 0.2861756051675313, 0.06716366243727775]
+event_parser.hash_to_8d('你真蠢') = [0.08176445861929466, 0.08176445861929466, 0.6219939173539201, 0.3095368790587584, 0.3212175160043719, 0.560670573389449, 0.2861756051675313, 0.06716366243727775]
+逐元素完全一致 : PASS
+
+全部断言通过
+=== EXIT CODE: 0 ===
+
+
+9. GPU 上实际编码确认
+
+命令：加载 get_embedder('bge')，对文本编码并打印 device
+
+输出：
+device = cuda
+shape = (1024,)
+dtype = float32
+
+结论：BGE embedder 实际运行在 cuda 设备上，输出 1024 维 float32 向量。
+
+
+10. run_with_venv.bat 完整原文
+
+@echo off
+cd /d d:\aiqg\emotion_agent
+set HF_HOME=d:\aiqg\hf_cache
+set PIP_CACHE_DIR=d:\aiqg\pip_cache
+set HF_ENDPOINT=https://hf-mirror.com
+d:\aiqg\venv\Scripts\python.exe %*
+
+说明：调用方式为 run_with_venv.bat scripts\probe_embedder.py，即可在带好缓存与镜像的环境里跑任意脚本。
+
+
+11. 未改动现有 .py 文件的核对
+
+基准：V4.4 封版 hash 表（SHA256 前 16 位）
+方法：重新计算 d:\aiqg\emotion_agent 下全部 .py 文件（不含 secrets_local.py）的 SHA256 前 16 位，逐一比对
+
+结果：V4.4 基准的 54 个 .py 文件，hash 全部一致，无一改动。
+
+比对明细（左为文件名，右为 SHA256 前 16 位）：
+archiver.py F7B5AFB2D121B4C8
+config.py 9466A353AEB269AA
+decompressor.py C2D21C7D882F278E
+emotion.py 5C3B62AE2F1F2116
+emotion_releaser.py 98FC7D769E003194
+event_parser.py BD7F71EAB7F1264C
+fast_path.py 25D837BF496060BD
+feature_encoder.py 7E960C11F2D54FD3
+hippocampal_evaluator.py 4B7317DE2B03F7CF
+intercept.py F594D53EDADBC353
+llm_client.py A2ADA2B77F02C4D1
+logger.py 76A179D173979B1D
+main.py A580118515DBF54C
+memory_graph.py FD7FB1058E22F8D9
+multimodal.py 6C2978D1A872E615
+pipeline.py EDC1F26A8720584B
+policy.py 0E541AF602A60E9A
+prompt_builder.py 15DE0D3EEA9C8D1E
+raw_log.py 29F66391403E9A99
+schemas.py 1EFEA80C332E6E09
+short_term_buffer.py 6012DC2F7211622E
+slow_path.py 34540EF43E1CE240
+state.py BD6E89D417F737AA
+state_translator.py A5F0552D2E5DC3A8
+xinguang.py 694FCCDA9BDB885E
+tests\__init__.py E3B0C44298FC1C14
+tests\fixtures.py D8E676625B5CF4CE
+tests\test_feature_encoder.py 78C9F71F0B205E74
+tests\test_full_pipeline_smoke.py 84B3B1B3D0A5C2DB
+tests\test_limits.py F065D29062FB22C4
+tests\test_memory_writeback.py 7AEC84A7DD93A329
+tests\test_policy.py E17BAAE10E8F5D9D
+tests\test_reproducibility.py 1CCE50D6E6CE7FD7
+tests\test_schemas.py D2D18FB14DC5C3FC
+tests\test_three_scenarios.py EA455B944D06CD29
+scripts\auto_chat.py 4BA3C4DE6087DFC9
+scripts\chat_cli.py BC4AE2CC74AC004E
+scripts\probe_archiver.py A7D263E1283AC1CE
+scripts\probe_buffer.py AFB82DE983DA51F3
+scripts\probe_decompressor.py 0A0198EFC4C01F75
+scripts\probe_heuristic_change.py F3D98A8BF2CBB815
+scripts\probe_llm_switch.py EAF7273548E74E36
+scripts\probe_memory_pipeline.py 929FE0AB2D0F6FBF
+scripts\probe_numeric.py A7BBDD669EB83309
+scripts\probe_prompt_render.py 710BBFDEE7B8500B
+scripts\probe_rank_divergence.py 215721FABD15DBC9
+scripts\probe_read_side.py D59C497E50CECD0D
+scripts\probe_real_prompt.py 4A649C7711B2CF4A
+scripts\probe_recall_with_history.py D8FD1862844A2FA7
+scripts\probe_session.py C6CDF2734DDAB988
+scripts\probe_v43_realstate.py 7C79AA917181A972
+scripts\probe_xinguang.py 6F08E5A422AC8DC4
+scripts\probe_xinguang_budget.py 70D7B9EF08A04C12
+scripts\run_real_llm_check.py E00CD6BEEBDD0D39
+scripts\verify_scenarios.py CA05A989743DE7F2
+
+本阶段新增文件（不在 V4.4 基准内，属新增而非修改）：
+embedder.py 528806BDAD7CBCBF
+scripts\probe_embedder.py C2A9032BB68FD94D
+
+另有此前 M3 阶段已存在的两个脚本（本轮未触碰）：
+scripts\probe_planC.py 35E8E6583CF88AC0
+scripts\probe_v_inputs.py 0A2547C197C2AAB3
+
+
+12. 过程中遇到的问题与解决
+
+问题 1：默认 huggingface.co 被拦截
+现象：探针首次运行报 WinError 10061 目标计算机积极拒绝，反复重试 5 次仍失败。
+原因：huggingface.co 直连不可达；系统代理 127.0.0.1:7890 未运行。
+解决：设置 HF_ENDPOINT=https://hf-mirror.com。经 curl 直连测试，hf-mirror.com 返回 200，可达。
+
+问题 2：PowerShell 默认走已宕机的系统代理
+现象：用 Invoke-WebRequest 测试时所有站点均"无法连接到远程服务器"。
+原因：Invoke-WebRequest 默认继承 IE 代理设置（127.0.0.1:7890），而该代理未运行。
+解决：改用 curl --noproxy "*" 直连测试，确认真实可达性；Python 的 requests 不走 IE 代理，故直接设置 HF_ENDPOINT 即可。
+
+问题 3：symlink 警告
+现象：huggingface_hub 提示 D:\aiqg\hf_cache 不支持符号链接，缓存为降级模式。
+原因：Windows 未开开发者模式，普通用户无符号链接权限。
+影响：仅多占磁盘，不影响功能。可接受。
+
+问题 4：后台任务退出码显示为 1
+现象：探针后台运行显示 failed exit 1。
+原因：tqdm 进度条写入 stderr，被 PowerShell 当作 NativeCommandError。
+解决：干净重跑并以 $LASTEXITCODE 判定，实际 exit code = 0，全部断言通过。
+
+
+13. BGE 模型缓存
+
+路径：d:\aiqg\hf_cache\hub\models--BAAI--bge-large-zh-v1.5
+大小：约 1242.5 MB（26 个文件）
+模型：BAAI/bge-large-zh-v1.5，1024 维
+
+
+14. 一句话结论
+
+环境（D 盘 venv + torch 2.12.1+cu130 + RTX 5060 sm_120 GPU 真验证）、可插拔 embedder（BGE 1024 维默认 + Hash 8 维 fallback）、探针（语义区分度与 hash 兼容性全部通过）均已就位，且未改动任何现有 .py 文件，M3-T3 第一阶段完成。
+
+停止，等待裁决。
+
+
+附录 A：venv 完整 pip list
+
+Package               Version
+annotated-doc         0.0.5
+anyio                 4.15.1
+certifi               2026.7.22
+click                 8.5.0
+cloudpickle           3.1.2
+colorama              0.4.6
+exceptiongroup        1.3.1
+filelock              4.0.12
+fsspec                2026.9.0
+h11                   0.16.0
+hf-xet                1.6.0
+httpcore              1.0.9
+httpx                 0.28.1
+huggingface_hub       1.33.0
+idna                  3.20
+Jinja2                3.1.6
+joblib                1.6.0
+markdown-it-py        4.2.0
+MarkupSafe            3.0.4
+mdurl                 0.1.2
+mpmath                1.3.0
+networkx              3.4.2
+numpy                 2.2.6
+packaging             26.3
+pip                   26.2.1
+Pygments              2.21.0
+PyYAML                6.0.3
+regex                 2026.9.29
+rich                  15.0.0
+safetensors           0.8.0
+scikit-learn          1.7.2
+scipy                 1.15.3
+sentence-transformers 6.1.0
+setuptools            65.5.0
+shellingham           1.5.4
+sympy                 1.14.0
+threadpoolctl         3.7.0
+tokenizers            0.23.2
+tomli                 2.4.1
+torch                 2.12.1+cu130
+tqdm                  4.70.1
+transformers          5.18.0
+typer                 0.27.2
+typing_extensions     4.16.0

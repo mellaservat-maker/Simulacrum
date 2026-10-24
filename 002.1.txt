@@ -1,0 +1,522 @@
+本文件属于 002 号工作。
+
+T24 执行回报：让 recalled_memory["emotion_value"] 影响本轮慢通路 D_slow
+
+================================================================
+零、本次工作说明
+================================================================
+本文件是 002 号工作的唯一汇报文件。
+汇报类文件：002.1.txt（本文件）
+产物类文件（不参与编号，保持原名）：
+  d:\aiqg\emotion_agent\scripts\probe_t24.py（T24 探针，新建）
+  d:\aiqg\emotion_agent_snapshot_pre_t24\（T24 改动前快照，目录）
+
+执行前已按所有者要求先完成两项核实（详见第十节），核实通过后才开始 T24。
+
+================================================================
+一、快照
+================================================================
+快照路径：d:\aiqg\emotion_agent_snapshot_pre_t24\
+文件总数：113 个
+其中 .py 文件数：60 个
+
+排除项实测校验（快照内计数，全部应为 0，实测全部为 0）：
+  __pycache__ 目录项：0
+  .pytest_cache 目录项：0
+  secrets_local.py：0
+  logs 相关路径：0
+
+说明：60 个 .py 与 V4.5 封版基准的 60 条完全对应，快照 py 数与基准条数一致。
+
+================================================================
+二、pipeline.py 改动处原文（含上下文）
+================================================================
+改动文件：d:\aiqg\emotion_agent\pipeline.py
+改动位置：两处，分别为 run_scenario 内与 run_turn 内，结构完全相同。
+两处均位于「读取侧」之后、「快通路（run_fast_path）」之前，即在
+hippocampal_evaluate 之后、在 run_slow_path 之前，符合裁决指定的接入位置。
+
+第一处（run_scenario，第 84 行至 107 行，改动后原文）：
+
+    # 读取侧（M2-D，默认关闭，只记录不影响评估）
+    if MEMORY_READ_ENABLED:
+        packages = st["archiver"].get_packages()
+        if packages:
+            latest = packages[-1]
+            recalled = st["decompressor"].for_emotion_evaluator(latest)
+            st["recalled_memory"] = recalled
+    else:
+        st["recalled_memory"] = None
+
+    # T24：让召回记忆参与本轮评估。
+    # 取 recalled_memory["emotion_value"]（标量）作为增量加进 ReframedContext；
+    # ReframedContext 维度跟随 x（8 维），标量广播到每一维。
+    # 无召回时增量为 0.0，本块退化为恒等运算，行为与改动前完全一致。
+    recalled_emotion_delta = 0.0
+    if st["recalled_memory"] is not None:
+        recalled_emotion_delta = float(st["recalled_memory"]["emotion_value"])
+    ReframedContext = ReframedContext + recalled_emotion_delta
+
+    # 快通路（可能更新 B[1]）
+    D_fast, B = run_fast_path(x_fast, B)
+
+    # 慢通路（用更新后的 B）
+    D_slow, V = run_slow_path(x, ReframedContext, M, B, st["w_PFC"], HabituationSignal)
+
+第二处（run_turn，第 230 行至 253 行，改动后原文）：
+
+    # 读取侧（M2-D，默认关闭，只记录不影响评估）
+    if MEMORY_READ_ENABLED:
+        packages = st["archiver"].get_packages()
+        if packages:
+            latest = packages[-1]
+            recalled = st["decompressor"].for_emotion_evaluator(latest)
+            st["recalled_memory"] = recalled
+    else:
+        st["recalled_memory"] = None
+
+    # T24：让召回记忆参与本轮评估。
+    # 取 recalled_memory["emotion_value"]（标量）作为增量加进 ReframedContext；
+    # ReframedContext 维度跟随 x（8 维），标量广播到每一维。
+    # 无召回时增量为 0.0，本块退化为恒等运算，行为与改动前完全一致。
+    recalled_emotion_delta = 0.0
+    if st["recalled_memory"] is not None:
+        recalled_emotion_delta = float(st["recalled_memory"]["emotion_value"])
+    ReframedContext = ReframedContext + recalled_emotion_delta
+
+    # 快通路（可能更新 B[1]）
+    D_fast, B = run_fast_path(x_fast, B)
+
+    # 慢通路（用更新后的 B）
+    D_slow, V = run_slow_path(x, ReframedContext, M, B, st["w_PFC"], HabituationSignal)
+
+另外，两处的 log 字典各新增两个键（原「"recalled_memory"」之后）：
+
+        "ReframedContext": ReframedContext,
+        "recalled_emotion_delta": recalled_emotion_delta,
+
+新增这两个键是为了让探针能读到 ReframedContext 与 delta 做对照，
+不改任何既有键，也不改 logger.py 的 REQUIRED_FIELDS。
+
+与快照的完整 diff（确认只有新增、无删除、无修改）：
+
+    93a94,102
+    >     # T24：让召回记忆参与本轮评估。
+    >     # 取 recalled_memory["emotion_value"]（标量）作为增量加进 ReframedContext；
+    >     # ReframedContext 维度跟随 x（8 维），标量广播到每一维。
+    >     # 无召回时增量为 0.0，本块退化为恒等运算，行为与改动前完全一致。
+    >     recalled_emotion_delta = 0.0
+    >     if st["recalled_memory"] is not None:
+    >         recalled_emotion_delta = float(st["recalled_memory"]["emotion_value"])
+    >     ReframedContext = ReframedContext + recalled_emotion_delta
+    >
+    149a159,160
+    >         "ReframedContext": ReframedContext,
+    >         "recalled_emotion_delta": recalled_emotion_delta,
+    228a240,248
+    >     # T24：让召回记忆参与本轮评估。
+    >     # 取 recalled_memory["emotion_value"]（标量）作为增量加进 ReframedContext；
+    >     # ReframedContext 维度跟随 x（8 维），标量广播到每一维。
+    >     # 无召回时增量为 0.0，本块退化为恒等运算，行为与改动前完全一致。
+    >     recalled_emotion_delta = 0.0
+    >     if st["recalled_memory"] is not None:
+    >         recalled_emotion_delta = float(st["recalled_memory"]["emotion_value"])
+    >     ReframedContext = ReframedContext + recalled_emotion_delta
+    >
+    284a305,306
+    >         "ReframedContext": ReframedContext,
+    >         "recalled_emotion_delta": recalled_emotion_delta,
+
+关于接入位置的说明（按裁决要求先输出方案，未擅自改公式）：
+ReframedContext 是 slow_path 中唯一接收的标量加成载体，
+slow_path 的 z_s 与 z_v 都以 (x + ReframedContext) 为输入，
+因此把召回情绪值加进 ReframedContext 是唯一能做到
+「只改pipeline.py、不碰 slow_path.py、不改任何公式」的接入方式。
+未改动 x、w_s、W_v、u_s、U_v、ETA、W_H、b_s 等任何参数与公式。
+
+================================================================
+三、scripts/probe_t24.py 全文
+================================================================
+路径：d:\aiqg\emotion_agent\scripts\probe_t24.py
+
+# ============================================================
+# probe_t24.py · T24 探针
+# 验证 recalled_memory["emotion_value"] 确实影响本轮慢通路 D_slow
+#
+# 做法：跑 8 轮「被骂」（run_session，跨轮共享 state）
+#   写入侧阈值=6，第 6 轮末触发归档 -> 第 7 轮起读取侧能召回
+#   打印第 7、8 轮的 recalled_memory / ReframedContext / D_slow / action
+#
+# 对照方式：包装 pipeline.run_slow_path，在同一轮的同一组输入上
+#   再算一次「假装没有召回」（ReframedContext 减掉 delta）的 D_slow，
+#   两个值在同一轮内比较，排除海马体历史累积的干扰。
+# ============================================================
+
+import os
+import sys
+
+import numpy as np
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
+
+import pipeline
+from pipeline import run_session
+from slow_path import run_slow_path as _real_slow_path
+
+# 记录每一轮慢通路的真实输入，用于事后做同轮 A/B 对照
+records_raw = []
+
+
+def recording_slow_path(x, ReframedContext, M, B, w_PFC, HabituationSignal):
+    """包装慢通路：记录本轮真实输入，行为与原函数完全一致。"""
+    real_D, real_V = _real_slow_path(x, ReframedContext, M, B, w_PFC, HabituationSignal)
+    records_raw.append({
+        "x": np.asarray(x).copy(),
+        "RC": np.asarray(ReframedContext).copy(),
+        "M": np.asarray(M).copy(),
+        "B": np.asarray(B).copy(),
+        "w_PFC": np.asarray(w_PFC).copy(),
+        "hab": float(HabituationSignal),
+        "D": real_D,
+    })
+    return real_D, real_V
+
+
+def fmt(v, n=6):
+    return np.array2string(np.asarray(v), precision=n, separator=", ")
+
+
+def main():
+    # 接管 pipeline 里的慢通路引用，只记录不改行为
+    pipeline.run_slow_path = recording_slow_path
+
+    print("=== 1. 跑 8 轮「被骂」（run_session，fixture 模式）===")
+    logs, st = run_session(["被骂"] * 8, feature_mode="fixture", seed=42)
+    print("8 轮完成")
+    print()
+
+    print("=== 2. 归档包数量 ===")
+    print("archiver.get_packages() 数量 = %d" % len(st["archiver"].get_packages()))
+    print()
+
+    print("=== 3. 逐轮概览 ===")
+    print("轮次 | recalled_memory | delta | D_slow | action")
+    for i, lg in enumerate(logs, start=1):
+        rm = lg["recalled_memory"]
+        rm_s = "None" if rm is None else ("ev=%.4f" % rm["emotion_value"])
+        print("%3d | %-14s | %.4f | %.6f | %s"
+              % (i, rm_s, lg["recalled_emotion_delta"], lg["D_slow"], lg["action"]))
+    print()
+
+    print("=== 4. 第 7 轮详情（首个有召回的轮次）===")
+    lg7 = logs[6]
+    print("recalled_memory          = %s" % (lg7["recalled_memory"],))
+    print("recalled_emotion_delta   = %.6f" % lg7["recalled_emotion_delta"])
+    print("ReframedContext          = %s" % fmt(lg7["ReframedContext"]))
+    print("D_slow                   = %.8f" % lg7["D_slow"])
+    print("action                   = %s" % lg7["action"])
+    print()
+
+    print("=== 5. 第 8 轮详情 ===")
+    lg8 = logs[7]
+    print("recalled_memory          = %s" % (lg8["recalled_memory"],))
+    print("recalled_emotion_delta   = %.6f" % lg8["recalled_emotion_delta"])
+    print("ReframedContext          = %s" % fmt(lg8["ReframedContext"]))
+    print("D_slow                   = %.8f" % lg8["D_slow"])
+    print("action                   = %s" % lg8["action"])
+    print()
+
+    print("=== 6. 同轮 A/B 对照（同一 M、同一 B，只撤销召回增量）===")
+    cf7 = _real_slow_path(records_raw[6]["x"], records_raw[6]["RC"] - lg7["recalled_emotion_delta"],
+                          records_raw[6]["M"], records_raw[6]["B"],
+                          records_raw[6]["w_PFC"], records_raw[6]["hab"])
+    cf8 = _real_slow_path(records_raw[7]["x"], records_raw[7]["RC"] - lg8["recalled_emotion_delta"],
+                          records_raw[7]["M"], records_raw[7]["B"],
+                          records_raw[7]["w_PFC"], records_raw[7]["hab"])
+    print("第 7 轮 D_slow 有召回 = %.8f，无召回对照 = %.8f，差 = %.3e"
+          % (lg7["D_slow"], cf7[0], abs(lg7["D_slow"] - cf7[0])))
+    print("第 8 轮 D_slow 有召回 = %.8f，无召回对照 = %.8f，差 = %.3e"
+          % (lg8["D_slow"], cf8[0], abs(lg8["D_slow"] - cf8[0])))
+    print("第 7 轮 V 有召回 = %s" % fmt(lg7["V"]))
+    print("第 7 轮 V 无召回 = %s" % fmt(cf7[1]))
+    print()
+
+    print("=== 7. 前 6 轮 delta 全部为 0 ===")
+    pre_deltas = [lg["recalled_emotion_delta"] for lg in logs[:6]]
+    print("前 6 轮 recalled_emotion_delta = %s" % pre_deltas)
+    print()
+
+    print("=== 8. 断言 ===")
+    problems = []
+
+    if not all(d == 0.0 for d in pre_deltas):
+        problems.append("前 6 轮 delta 应全为 0.0，实际 %s" % pre_deltas)
+    else:
+        print("前 6 轮 delta 全为 0.0: PASS")
+
+    if lg7["recalled_memory"] is None:
+        problems.append("第 7 轮应有召回，实际为 None")
+    elif lg7["recalled_emotion_delta"] == 0.0:
+        problems.append("第 7 轮 delta 应非 0，实际 0.0（emotion_value 恰为 0）")
+    else:
+        print("第 7 轮召回 emotion_value=%.4f -> delta=%.4f: PASS"
+              % (lg7["recalled_memory"]["emotion_value"], lg7["recalled_emotion_delta"]))
+
+    if lg8["recalled_memory"] is None:
+        problems.append("第 8 轮应有召回，实际为 None")
+    else:
+        print("第 8 轮同样有召回: PASS")
+
+    if abs(lg7["D_slow"] - cf7[0]) < 1e-12:
+        problems.append("第 7 轮撤销召回增量后 D_slow 完全不变，召回未进入慢通路")
+    else:
+        print("第 7 轮撤销召回增量后 D_slow 改变（差 %.3e）: PASS" % abs(lg7["D_slow"] - cf7[0]))
+
+    if abs(lg8["D_slow"] - cf8[0]) < 1e-12:
+        problems.append("第 8 轮撤销召回增量后 D_slow 完全不变，召回未进入慢通路")
+    else:
+        print("第 8 轮撤销召回增量后 D_slow 改变（差 %.3e）: PASS" % abs(lg8["D_slow"] - cf8[0]))
+
+    # delta 是否真的进了 ReframedContext：还原海马体原始输出后应落在 tanh 值域内
+    rc_raw7 = records_raw[6]["RC"] - lg7["recalled_emotion_delta"]
+    if np.all(np.abs(rc_raw7) <= 1.0 + 1e-9):
+        print("撤销 delta 后 ReframedContext 落在 tanh 值域内（逐维 |x|<=1）: PASS")
+    else:
+        print("撤销 delta 后 ReframedContext = %s，逐维绝对值最大 %.6f"
+              % (fmt(rc_raw7), float(np.max(np.abs(rc_raw7)))))
+
+    if problems:
+        print()
+        print("TODO_REVIEW")
+        for p in problems:
+            print("  " + p)
+        return 1
+
+    print()
+    print("全部断言通过：召回记忆的 emotion_value 已作为标量增量加进 ReframedContext，")
+    print("并经由 x + ReframedContext 进入慢通路 z_s，影响 D_slow。")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+
+探针设计说明（重要）：
+探针第一版用「第 7 轮 ReframedContext 减第 1 轮 ReframedContext 应逐维恒等于 delta」
+做断言，实测不成立并输出了 TODO_REVIEW。原因是跨轮对照混入了海马体历史累积
+（HistoricalResidual、HabituationSignal 逐轮变化）的差异，不是 delta 本身的问题。
+已改为同轮内 A/B 对照：包装 pipeline.run_slow_path 记录该轮真实的
+x / RC / M / B / w_PFC / HabituationSignal，事后用同一组输入、仅把
+ReframedContext 减去 delta 再跑一次真实 slow_path，两个 D_slow 在同一轮内比较，
+彻底排除历史累积干扰。第二版全部断言 PASS。
+
+================================================================
+四、probe_t24.py 运行输出
+================================================================
+运行命令：run_with_venv.bat scripts\probe_t24.py
+（必须用 run_with_venv.bat，直接调 venv python 会因缺 HF_HOME / HF_ENDPOINT
+  导致 sentence_transformers 加载本地模型 config.json 失败，
+  报 JSONDecodeError，已如实记录，非代码问题）
+
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+=== 1. 跑 8 轮「被骂」（run_session，fixture 模式）===
+Loading weights: 100%|██████████| 391/391 [00:00<00:00, 24684.63it/s]
+8 轮完成
+
+=== 2. 归档包数量 ===
+archiver.get_packages() 数量 = 1
+
+=== 3. 逐轮概览 ===
+轮次 | recalled_memory | delta | D_slow | action
+  1 | None           | 0.0000 | 0.523369 | suppress
+  2 | None           | 0.0000 | 0.651119 | suppress
+  3 | None           | 0.0000 | 0.677517 | task_first
+  4 | None           | 0.0000 | 0.689109 | task_first
+  5 | None           | 0.0000 | 0.695702 | task_first
+  6 | None           | 0.0000 | 0.699968 | task_first
+  7 | ev=0.8500      | 0.8500 | 0.774877 | task_first
+  8 | ev=0.8500      | 0.8500 | 0.776723 | task_first
+
+=== 4. 第 7 轮详情（首个有召回的轮次）===
+recalled_memory          = {'emotion_value': 0.85, 'emotion_polarity': 'negative'}
+recalled_emotion_delta   = 0.850000
+ReframedContext          = [1.799491, 1.799491, 1.799491, 1.622537, 1.837303, 1.799491, 1.831117, 1.831117]
+D_slow                   = 0.77487662
+action                   = task_first
+
+=== 5. 第 8 轮详情 ===
+recalled_memory          = {'emotion_value': 0.85, 'emotion_polarity': 'negative'}
+recalled_emotion_delta   = 0.850000
+ReframedContext          = [1.801634, 1.801634, 1.801634, 1.631344, 1.837852, 1.801634, 1.831931, 1.831931]
+D_slow                   = 0.77672264
+action                   = task_first
+
+=== 6. 同轮 A/B 对照（同一 M、同一 B，只撤销召回增量）===
+第 7 轮 D_slow 有召回 = 0.77487662，无召回对照 = 0.70295631，差 = 7.192e-02
+第 8 轮 D_slow 有召回 = 0.77672264，无召回对照 = 0.70516770，差 = 7.155e-02
+第 7 轮 V 有召回 = [0.738251, 0.815621]
+第 7 轮 V 无召回 = [0.71907 , 0.781863]
+
+=== 7. 前 6 轮 delta 全部为 0 ===
+前 6 轮 recalled_emotion_delta = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+
+=== 8. 断言 ===
+前 6 轮 delta 全为 0.0: PASS
+第 7 轮召回 emotion_value=0.8500 -> delta=0.8500: PASS
+第 8 轮同样有召回: PASS
+第 7 轮撤销召回增量后 D_slow 改变（差 7.192e-02）: PASS
+第 8 轮撤销召回增量后 D_slow 改变（差 7.155e-02）: PASS
+撤销 delta 后 ReframedContext落在 tanh 值域内（逐维 |x|<=1）: PASS
+
+全部断言通过：召回记忆的 emotion_value 已作为标量增量加进 ReframedContext，
+并经由 x + ReframedContext 进入慢通路 z_s，影响 D_slow。
+
+退出码：0，未输出 TODO_REVIEW。
+
+如实记录的观察（不自行裁决，请所有者转顾问）：
+1. 归档时序与预期一致：阈值 6，第 6 轮末归档出1 个包，第 7 轮起读取侧召回成功，
+   8 轮结束共 1 个归档包（第 8 轮末缓冲区仅 3 条，未到阈值，未产生第二个包）。
+2. emotion_value 不可复现：本轮为 0.85，同一脚本上一轮运行为 0.70。
+   原因是 config.LLM_BACKEND = "deepseek_official"，归档时走真 LLM 路径，
+   emotion_value 由 LLM 现场生成，非确定性。这属于既有设计，不是本次改动引入。
+   如果需要固定值做回归，须改用 mock 后端或另建固定探针，本次未擅自改动。
+3. action 未因召回改变：第 7、8 轮 action 仍为 task_first。
+   原因是被骂场景在第 3 轮起已稳定在 task_first，且 delta 使D_slow 上升
+   （0.699968 -> 0.774877）反而更偏向 task_first 分支，方向与 policy 逻辑一致。
+   T24 的目标只是让召回影响 D_slow，不要求改变 action，故不视为未达成。
+4. ReframedContext 加了 0.85 后逐维绝对值达1.8 左右，超出 tanh 原始值域 [-1,1]。
+   这是「在tanh 之后做标量加法」的直接后果，是裁决指定做法的必然结果，
+   已如实记录，是否需要改为在 tanh 内部相加请裁决者定。
+
+================================================================
+五、pytest 完整输出
+================================================================
+运行命令：run_with_venv.bat -m pytest tests\ -v
+结果：1 failed, 13 passed, 1 skipped in 28.59s
+与裁决目标（13 passed / 1 skipped / 1 failed）一致。
+
+逐项状态：
+  tests/test_schemas.py::test_dimensions PASSED
+  tests/test_limits.py 等其余 13 项 PASSED
+  tests/test_three_scenarios.py SKIPPED（M1 三场景标准已弃）
+  tests/test_reproducibility.py::test_config_seed_frozen FAILED
+
+失败详情（与改动前完全相同，属既存问题，本次未修）：
+  subprocess.CalledProcessError: Command '['python', '-c', 'from config import w_s;
+  print(w_s.tolist())']' returned non-zero exit status 1.
+  Captured stderr:
+    File "d:\aiqg\emotion_agent\config.py", line 16, in <module>
+      import numpy as np
+    ModuleNotFoundError: No module named 'numpy'
+
+失败根因：该测试用裸 python 调子进程，走到 C:\Python310\python.exe（该解释器无 numpy），
+而非 venv 解释器。此为审查报告 4.4 的既存问题，已登记为 L26 / T28，
+按裁决本次不夹带修改。
+
+================================================================
+六、main.py 输出
+================================================================
+运行命令：run_with_venv.bat main.py
+
+================================================================================
+M1 三场景验收 · fixture 模式
+================================================================================
+被骂action=suppress     expected=suppress     PASS
+被夸     action=reappraise   expected=task_first   FAIL
+被质疑    action=reappraise   expected=reappraise   PASS
+--------------------------------------------------------------------------------
+fixture 验收：失败
+
+================================================================================
+M1 encoder 模式冒烟（不断言 action，只检查字段完整）
+================================================================================
+被骂     冒烟通过（action=suppress）
+被夸     冒烟通过（action=task_first）
+被质疑    action=冒烟通过（action=reappraise）
+--------------------------------------------------------------------------------
+encoder 冒烟：全部通过
+
+M1 总验收：失败
+
+如实记录：
+1. encoder 模式三场景 action：被骂 suppress、被夸 task_first、被质疑 reappraise。
+2. fixture 模式被夸场景 FAIL（action=reappraise，expected=task_first）。
+   此为改动前既有现象，M1 标准已冻结并标记废弃（test_three_scenarios 已 skip），
+   本次未改action 逻辑，未修。
+3. 补充做了改动前后对照验证：用快照 d:\aiqg\emotion_agent_snapshot_pre_t24\
+   内的改前版本跑同一命令 main.py，输出与改动后逐行完全一致
+   （fixture 被骂 PASS / 被夸 FAIL / 被质疑 PASS；encoder 三场景冒烟全通过）。
+   原因：main.py 的三场景是单轮独立会话，缓冲区未达归档阈值，
+   无召回，delta 恒为 0，本改动退化为恒等变换。此对照证明 T24 未引入回归。
+
+================================================================
+七、hash 对比
+================================================================
+pipeline.py
+  改前：EDC1F26A8720584B（与 V4.5 基准值一致）
+  改后：5899A7E7D3345BA7
+
+其余文件与 V4.5 基准对比：
+  V4.5 基准条数 = 60
+  与基准不一致的条目：仅 pipeline.py 一条（本次授权改动）
+  即其余 59 条 .py 的hash 与 V4.5 基准逐条一致，零不符。
+
+V4.5 基准之外新增的 .py（2 个，均不属基准范围）：
+  491BEEBD10E66919  scripts/probe_t24.py（本次新建的 T24 探针）
+  6E32C9D235DD74CC  secrets_local.py（密钥文件，本就排除在基准与快照之外，
+                     此处仅登记路径存在，未读取内容，不列入基准）
+
+未改动的禁区文件（已逐项确认 hash 未变，与 V4.5 基准一致）：
+  slow_path.py
+  hippocampal_evaluator.py
+  xinguang.py
+  decompressor.py
+  archiver.py
+未改动任何参数值（w_s / W_v / u_s / U_v / ETA / W_H / b_s / v_s / v_v / b_v 等）。
+
+================================================================
+八、一句话结论
+================================================================
+T24 已完成：pipeline.py 两处接入 recalled_memory["emotion_value"] 作为标量增量
+加进 ReframedContext，实测召回后 D_slow 同轮对照差 7.19e-02 / 7.16e-02，
+pytest 保持 13 passed / 1 skipped / 1 failed、main.py 输出与改前逐行一致、
+其余 59 个 .py 与 V4.5 基准零不符，本工作达成。
+
+================================================================
+九、硬性约束遵守情况自查
+================================================================
+1. 只改pipeline.py：符合。改动全部集中在 pipeline.py 的两处 delta 块
+   与两处 log 新增键，diff 已验证只有新增无修改。
+2. 新建 scripts/probe_t24.py：符合。
+3. 未改 slow_path.py / hippocampal_evaluator.py / xinguang.py / decompressor.py /
+   archiver.py：符合，五者 hash 均与 V4.5 基准一致。
+4. 未调任何参数值：符合，未改 config.py（config.py hash 与 V4.5 基准一致）。
+5. 未用 try / except 掩盖错误：符合，pipeline.py 与探针内均无 try/except。
+   探针第一版断言失败时如实输出 TODO_REVIEW 而非吞掉，第二版才通过。
+6. secrets_local.py 未进快照、未进本汇报内容、未读取内容：符合。
+7. 临时脚本清理：本次为做按行号精确插入曾在 d:\aiqg\ 下建临时补丁脚本，
+   已全部删除；项目目录内无任何临时文件残留。
+
+================================================================
+十、执行前的两项核实（所有者要求先做，已完成）
+================================================================
+核实 1：d:\aiqg\emotion_agent\M3T3B_改动前_hash基准.txt
+  是否存在：是
+  文件大小：3093 字节
+  首行：M3-T3B 改动前 hash 基准
+  末行：本基准同时作为本次 T3-B 改动的回滚依据，快照位于
+        d:\aiqg\emotion_agent_snapshot_pre_t3b\（108 个文件，
+        已排除 logs、__pycache__、.pytest_cache、secrets_local.py）。
+  结论：文件存在，「立即停止」条件不触发，允许继续 T24。
+
+核实 2：d:\aiqg\emotion_agent\V45_hash基准.txt
+  是否含「58以下无」字样：否（FOUND=no）
+  杂散行扫描（排除合法 hash 行与空行）：无任何输出
+  有效 hash 条数：60
+  结论：无杂散行，未做任何脚本重写覆盖，保持原样。
+
+表述提醒已记住并遵守：
+T3-B 主体那一轮发生在编号规则建立之前，没有编号，不称其为任何编号。
+编号从规则生效起算，001 号工作是 T3-B 收尾，本次 T24 为 002 号工作。

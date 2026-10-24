@@ -1,0 +1,103 @@
+M2 封版收尾回报
+日期：2026-10-06
+状态：等待裁决
+
+
+1. M2 快照目录路径与文件总数
+
+路径：d:\aiqg\emotion_agent_snapshot_m2_mock\
+文件总数：71
+
+排除项：logs、__pycache__、.pytest_cache
+说明：快照是在 config.py 加 L20~L22/T21~T24 之前做的，所以快照里的 config.py 是修改前版本。
+封版代码以 d:\aiqg\emotion_agent\ 当前目录为准（含新增的 L20~L22/T21~T24）。
+
+
+2. config.py 中 L20 / L21 / L22 / T21 / T22 / T23 / T24 的原文
+
+已知限制区新增（L20~L22，位于第 132~134 行）：
+# [M2 已知限制] L20 归档器的 organize_narrative 为桩实现，尚未接真 LLM
+# [M2 已知限制] L21 读取侧默认关闭（MEMORY_READ_ENABLED=False），记忆暂不影响评估
+# [M2 已知限制] L22 时间触发归档尚未实现，当前仅按轮数触发
+
+M2 TODO 清单新增（T21~T24，位于第 159~162 行）：
+# T21 接真 LLM 替换 archiver.organize_narrative 桩
+# T22 接真 LLM 替换 llm_client.MockLLM
+# T23 实现时间触发归档（常驻进程 / 开机补写）
+# T24 开启读取侧，让记忆参与评估（当前 MEMORY_READ_ENABLED=False）
+
+
+3. M2 封版 hash 基准表（全部 .py 文件，SHA256 前 16 位，按文件名排序）
+
+文件名 | SHA256 前 16 位
+tests\__init__.py | E3B0C44298FC1C14
+archiver.py | 8B489CBAF8DF0140
+config.py | D8F4AA96B975873C
+decompressor.py | C2D21C7D882F278E
+emotion.py | 5C3B62AE2F1F2116
+emotion_releaser.py | 98FC7D769E003194
+event_parser.py | BD7F71EAB7F1264C
+fast_path.py | 25D837BF496060BD
+feature_encoder.py | 7E960C11F2D54FD3
+tests\fixtures.py | D8E676625B5CF4CE
+hippocampal_evaluator.py | 4B7317DE2B03F7CF
+intercept.py | F594D53EDADBC353
+llm_client.py | 93580C7D67A5029C
+logger.py | 76A179D173979B1D
+main.py | A580118515DBF54C
+memory_graph.py | FD7FB1058E22F8D9
+multimodal.py | 6C2978D1A872E615
+pipeline.py | D9A1FD207DAAD009
+policy.py | 0E541AF602A60E9A
+scripts\probe_archiver.py | A7D263E1283AC1CE
+scripts\probe_buffer.py | AFB82DE983DA51F3
+scripts\probe_decompressor.py | 0A0198EFC4C01F75
+scripts\probe_heuristic_change.py | F3D98A8BF2CBB815
+scripts\probe_memory_pipeline.py | 929FE0AB2D0F6FBF
+scripts\probe_numeric.py | A7BBDD669EB83309
+scripts\probe_rank_divergence.py | 215721FABD15DBC9
+scripts\probe_recall_with_history.py | D8FD1862844A2FA7
+scripts\probe_session.py | C6CDF2734DDAB988
+scripts\probe_v43_realstate.py | 7C79AA917181A972
+scripts\probe_xinguang.py | 6F08E5A422AC8DC4
+scripts\probe_xinguang_budget.py | 70D7B9EF08A04C12
+prompt_builder.py | 15DE0D3EEA9C8D1E
+raw_log.py | 29F66391403E9A99
+schemas.py | 1EFEA80C332E6E09
+short_term_buffer.py | 6012DC2F7211622E
+slow_path.py | 34540EF43E1CE240
+state.py | BD6E89D417F737AA
+state_translator.py | B9EA5135060DA6A2
+tests\test_feature_encoder.py | 78C9F71F0B205E74
+tests\test_full_pipeline_smoke.py | 84B3B1B3D0A5C2DB
+tests\test_limits.py | F065D29062FB22C4
+tests\test_memory_writeback.py | 7AEC84A7DD93A329
+tests\test_policy.py | E17BAAE10E8F5D9D
+tests\test_reproducibility.py | 1CCE50D6E6CE7FD7
+tests\test_schemas.py | D2D18FB14DC5C3FC
+tests\test_three_scenarios.py | EA455B944D06CD29
+scripts\verify_scenarios.py | CA05A989743DE7F2
+xinguang.py | 694FCCDA9BDB885E
+
+共 48 个 .py 文件。
+
+
+4. 三份快照的目录路径与文件数
+
+_snapshot_m1_pass:
+  路径：d:\aiqg\emotion_agent_snapshot_m1_pass\
+  状态：存在
+  文件数：37
+
+_snapshot_v43:
+  路径：d:\aiqg\emotion_agent_snapshot_v43\
+  状态：存在
+  文件数：45
+
+_snapshot_m2_mock:
+  路径：d:\aiqg\emotion_agent_snapshot_m2_mock\
+  状态：存在
+  文件数：71
+
+
+停止，等待裁决。

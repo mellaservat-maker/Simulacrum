@@ -1,0 +1,103 @@
+T033 封版 hash 基准（v6.16，性格衰竭系数 + danger 高门）
+
+生成日期：2026-10-22
+工作目录：d://aiqg//emotion_agent
+收录范围：全部 .py 源文件（与 T032 封版基准同口径，排除 _snapshot_* 备份目录）
+排除项：secrets_local.py、secrets_override.py、__pycache__、.pytest_cache、logs、_snapshot_*
+排序：按文件相对路径字母序
+文件总数：94
+
+FFDE10C8B4F41317  app.py
+E18EBC1A63CEEF7F  archiver.py
+4B2B403EF2771198  config.py
+35585DC176E3A2E2  decompressor.py
+19CDF143BA70AD80  embedder.py
+456B467279DE52D0  emotion.py
+5F7B0B9CFCC416E2  emotion_releaser.py
+DBEA7D39499860A4  evaluator.py
+BFFC141291CB680C  event_parser.py
+46997B52D1B8DEE5  fast_path.py
+338BD1E94966A85B  feature_encoder.py
+4B7317DE2B03F7CF  hippocampal_evaluator.py
+698F44AF7F8B9D28  intercept.py
+31F7CAF95CFDD791  llm_client.py
+CC3A3D10ABA8ED07  logger.py
+A580118515DBF54C  main.py
+CC86B63717228CB6  memory_gateway.py
+FD7FB1058E22F8D9  memory_graph.py
+6C2978D1A872E615  multimodal.py
+3F4D2979851256B7  pipeline.py
+9828F0955B0DACDD  policy.py
+748E0738AF5EE64E  prompt_builder.py
+29F66391403E9A99  raw_log.py
+A951322844F4C9AD  schemas.py
+48B9BB5F10A029A7  scripts/_env_check_t0175.py
+ED2DDA6A46590175  scripts/_llm_smoke_t0175.py
+86E563463EA9360A  scripts/_log_peek_t0175.py
+C37D01D4CBC351AB  scripts/_mini_pua_t0175.py
+F293008D8243324C  scripts/_singleton_check_t0175.py
+940C351F8FE2F5A2  scripts/_smoke_t0175.py
+55539BB0925A6E62  scripts/auto_chat.py
+C600BA30149147B8  scripts/chat_cli.py
+C37576A095CDCB7D  scripts/chat_cli_v6.py
+A7D263E1283AC1CE  scripts/probe_archiver.py
+AFB82DE983DA51F3  scripts/probe_buffer.py
+0A0198EFC4C01F75  scripts/probe_decompressor.py
+C2A9032BB68FD94D  scripts/probe_embedder.py
+F3D98A8BF2CBB815  scripts/probe_heuristic_change.py
+0982754499135297  scripts/probe_llm_retry.py
+EAF7273548E74E36  scripts/probe_llm_switch.py
+929FE0AB2D0F6FBF  scripts/probe_memory_pipeline.py
+A7BBDD669EB83309  scripts/probe_numeric.py
+35E8E6583CF88AC0  scripts/probe_planC.py
+710BBFDEE7B8500B  scripts/probe_prompt_render.py
+2635C9379D0647F0  scripts/probe_proxy_check.py
+215721FABD15DBC9  scripts/probe_rank_divergence.py
+D59C497E50CECD0D  scripts/probe_read_side.py
+4A649C7711B2CF4A  scripts/probe_real_prompt.py
+D8FD1862844A2FA7  scripts/probe_recall_with_history.py
+8A34A5B7AD7556C1  scripts/probe_s_evaluator.py
+C6CDF2734DDAB988  scripts/probe_session.py
+BE83806357A11DF0  scripts/probe_t023_action_loop.py
+D97773BE9BED5167  scripts/probe_t24.py
+00EE1323009B28DC  scripts/probe_t33_persistence.py
+4450089F3431596E  scripts/probe_t34_crash.py
+D7A4F290E4378EBB  scripts/probe_t35_collapse.py
+344E0C614F86F674  scripts/probe_t36_metabolism.py
+50CAED714278DCC5  scripts/probe_t36_question.py
+D6A94D2664342652  scripts/probe_t37_deterministic.py
+AF4DADF7DDFC98C3  scripts/probe_t38_cache_temp.py
+F4ACD6705B88B5DB  scripts/probe_t39_calibration.py
+807F17B4A25AA54E  scripts/probe_t3b_smoke.py
+306CD84A0475B660  scripts/probe_t40_brain_sim.py
+00B1A2985356FD56  scripts/probe_t41_praise_wound.py
+B9420195BB71EC73  scripts/probe_t42_mild_threat.py
+B6EAD5FAF6A29DF0  scripts/probe_t43_polarity.py
+1AD0E38E5B4D8AD5  scripts/probe_t44_calibration.py
+FB77D78A75303084  scripts/probe_t45_cli_persistence.py
+B781F1302CA3F0E4  scripts/probe_t46_runtime_config.py
+EDA39FAC3504E015  scripts/probe_t47_four_dim.py
+9B1EFF79108C0339  scripts/probe_t48_personality.py
+0A2547C197C2AAB3  scripts/probe_v_inputs.py
+7C79AA917181A972  scripts/probe_v43_realstate.py
+6F08E5A422AC8DC4  scripts/probe_xinguang.py
+70D7B9EF08A04C12  scripts/probe_xinguang_budget.py
+E00CD6BEEBDD0D39  scripts/run_real_llm_check.py
+C17A06D712CEA634  scripts/verify_scenarios.py
+83B66AEFEB75203C  server_api.py
+9202A8016BBB3D86  session_store.py
+6012DC2F7211622E  short_term_buffer.py
+AF3F7502213435B4  slow_path.py
+3B2E77FA2324F7A3  state.py
+AA81F659A7BFE60D  state_translator.py
+E3B0C44298FC1C14  tests/__init__.py
+0B7A467B6A1A7916  tests/fixtures.py
+78C9F71F0B205E74  tests/test_feature_encoder.py
+84B3B1B3D0A5C2DB  tests/test_full_pipeline_smoke.py
+505E84AAEBFC16ED  tests/test_limits.py
+5B6A6C9286354630  tests/test_memory_writeback.py
+E17BAAE10E8F5D9D  tests/test_policy.py
+29EC9B5526EE9987  tests/test_reproducibility.py
+3412C5CB42284985  tests/test_schemas.py
+C41959EAC1B35013  tests/test_three_scenarios.py
+2DE6FC4FDACC8D02  xinguang.py

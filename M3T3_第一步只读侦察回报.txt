@@ -1,0 +1,166 @@
+M3-T3 第一步：只读侦察回报
+日期：2026-10-06
+状态：等待裁决
+
+
+1. 任务 1：event_parser.py 完整原文
+
+# ============================================================
+# event_parser.py · V4.2 · 模块1 事件拆解
+# 规格：5.5.1 / 5.7
+# 输出：EventNode + event_embedding
+# M1：极简解析，只提取 person/task，embedding 用 hash_to_8d（L2/L7 已接受）
+# ============================================================
+
+import hashlib
+import time
+
+import numpy as np
+
+from schemas import EventNode
+
+
+def hash_to_8d(raw_text):
+    h = hashlib.md5(raw_text.encode()).digest()
+    vec = np.array([h[i] / 255.0 for i in range(8)])
+    return vec / (np.linalg.norm(vec) + 1e-8)
+
+
+_PERSON_HINTS = ("你", "我", "他", "她", "它", "大家", "老板", "用户", "AI", "老师")
+_TASK_HINTS = ("方案", "代码", "问题", "任务", "答案", "回复", "报告", "文档", "项目")
+
+
+def _extract_persons(raw_text):
+    return [p for p in _PERSON_HINTS if p in raw_text]
+
+
+def _extract_tasks(raw_text):
+    return [t for t in _TASK_HINTS if t in raw_text]
+
+
+def parse(raw_text, event_id=None, timestamp=None,
+          event_severity=0.0, importance=0.5,
+          emotion_weight=0.5, unfinished=0.0,
+          danger_score=0.0):
+    if event_id is None:
+        event_id = "E" + str(int(time.time() * 1000) % 1000000)
+    if timestamp is None:
+        timestamp = time.time()
+
+    return EventNode(
+        event_id=event_id,
+        timestamp=timestamp,
+        raw_text=raw_text,
+        event_embedding=hash_to_8d(raw_text),
+        nodes={
+            "person": _extract_persons(raw_text),
+            "task": _extract_tasks(raw_text),
+            "topic": [],
+            "state": [],
+            "relation": [],
+        },
+        relationships=[],
+        importance=importance,
+        emotion_weight=emotion_weight,
+        unfinished=unfinished,
+        danger_score=danger_score,
+        event_severity=event_severity,
+    )
+
+
+2. 任务 2：hash_to_8d 函数完整实现 + 位置
+
+位置：event_parser.py 第 16~19 行（任务 1 已包含）
+
+def hash_to_8d(raw_text):
+    h = hashlib.md5(raw_text.encode()).digest()
+    vec = np.array([h[i] / 255.0 for i in range(8)])
+    return vec / (np.linalg.norm(vec) + 1e-8)
+
+说明：取 MD5 digest 前 8 字节，每字节除以 255 归一化到 [0,1]，再做 L2 归一化。
+
+
+3. 任务 3：搜索"8"维度的所有依赖
+
+搜索结果（按文件分组）：
+
+[config.py]
+41: w_s = np.random.randn(8) * 0.1                  # [未校准]
+42: u_s = np.random.randn(8) * 0.1                  # [未校准]
+43: W_v = np.random.randn(2, 8) * 0.1               # [未校准]
+44: U_v = np.random.randn(2, 8) * 0.1               # [未校准]
+
+[event_parser.py]
+18:     vec = np.array([h[i] / 255.0 for i in range(8)])
+19:     return vec / (np.linalg.norm(vec) + 1e-8)
+
+[hippocampal_evaluator.py]
+50:    M = M / (np.linalg.norm(M) + 1e-8)
+
+[state.py]
+29:        "M_prev": np.zeros(8),
+
+[scripts/probe_*.py 和 probe_numeric.py]
+（多处 np.zeros(8) 或 randn(8)，均为探针内复刻，非主链路）
+
+总结：
+
+哪些地方假设了 embedding 是 8 维：
+- config.py 第 41~44 行：w_s、u_s 是 8 维向量，W_v、U_v 是 2x8 矩阵。这四个参数直接与 x（embedding）做矩阵乘，x 必须是 8 维
+- event_parser.py 第 18 行：hash_to_8d 硬编码 range(8)
+- state.py 第 29 行：M_prev = np.zeros(8)，M_prev 是 8 维
+- hippocampal_evaluator.py 第 50 行：M 的归一化，维度由输入决定，本身不硬编码 8，但 M 由 x 决定所以是 8 维
+- slow_path.py：z_s = w_s @ (x + ReframedContext) + u_s @ M，x 和 M 都是 8 维
+
+若 embedding 变成 384 维，哪些地方会立刻出错：
+- config.py：w_s/u_s（8 维）与 x（384 维）点积会维度不匹配，立刻报错
+- config.py：W_v/U_v（2x8）与 x（384 维）相乘会维度不匹配，立刻报错
+- state.py：M_prev（8 维）与 u_s（8 维）匹配，但与新的 384 维 x 不匹配
+- slow_path.py：w_s @ x 维度不匹配
+- feature_encoder.py：hash_to_8d 返回 8 维，若改成 384 维，下游全部断
+- hippocampal_evaluator.py：match_score 的 cosine 相似度计算，两边维度必须一致
+
+
+4. 任务 4：本地嵌入库检查
+
+运行命令：pip list | findstr /i "sentence transformers torch"
+
+输出：无任何匹配（findstr 返回 exit code 1，无输出）
+
+结论：无嵌入相关库（无 sentence-transformers、无 transformers、无 torch）。
+
+
+5. 任务 5：四个逐条回答
+
+问题 1：event_parser.py 现在生成的 embedding，是通过什么算法？
+
+通过 MD5 哈希。取 raw_text 的 MD5 digest 前 8 字节，每字节除以 255 归一化到 [0,1]，再做 L2 归一化，得到 8 维向量。
+
+问题 2：这个 embedding 有语义吗？还是纯 hash？
+
+纯 hash，无语义。两段语义相近的文本（如"你真蠢"和"你太笨了"）的 embedding 几乎正交，cosine 相似度接近 0；而两段字面相同但语义无关的文本会有相同的 embedding。MATCH_THRESHOLD=0.6 在 hash 下几乎筛不到候选（除非字面完全相同）。
+
+问题 3：如果把 embedding 换成真语义向量，最小改动方案是什么？
+
+方向（不改代码，只描述）：
+- 在 event_parser.py 中，把 hash_to_8d 替换为本地嵌入模型调用（如 sentence-transformers 的 all-MiniLM-L6-v2，输出 384 维，或 m3e-small 输出 768 维）
+- 同时把 config.py 的 w_s/u_s/W_v/U_v 维度从 8 改成嵌入维度（如 384）
+- state.py 的 M_prev 从 np.zeros(8) 改成 np.zeros(新维度)
+- hippocampal_evaluator.py 的 M 归一化无需改（自适应）
+- feature_encoder.py 若直接用 event.event_embedding 作为 x，则无需改
+- 需要先安装 sentence-transformers + torch（当前本地无此库）
+
+最小改动路径：只动 event_parser（替换函数）+ config（维度）+ state（M_prev）三处，其余链路自适应。
+
+问题 4：有没有办法让新 embedding 仍然输出 8 维，从而不牵动其他模块？
+
+可能性存在：在嵌入模型输出后加一个降维层（如 PCA、或一个 384→8 的线性映射），让最终仍输出 8 维。
+
+但可行性差：
+- 8 维太低，丢失大部分语义信息，cosine 相似度区分度可能不够
+- PCA 需要训练数据来拟合，不能凭空降维
+- 若用随机投影（Johnson-Lindenstrauss），8 维不足以保住 384 维的语义距离
+- 结论：技术上可行（加一层降维），但语义上几乎无意义，等于把好信号又压扁了
+
+
+停止，等待裁决。

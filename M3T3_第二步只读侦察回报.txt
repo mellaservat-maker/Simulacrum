@@ -1,0 +1,372 @@
+M3-T3 第二阶段 前置侦察回报
+日期：2026-10-07
+状态：等待裁决
+约束：未修改任何文件，未新建任何项目文件（本回报为唯一产出）
+
+
+任务 1：feature_encoder.py 完整原文
+
+# ============================================================
+# feature_encoder.py · V4.2 · 特征编码
+# 规格：5.5.1 / 5.5.2
+# 输出：x (8维) + x_fast (4维)
+# ============================================================
+
+import numpy as np
+
+from config import DANGER_KEYWORDS, POSITIVE_WORDS, NEGATIVE_WORDS
+
+
+def safe_cosine(a, b):
+    if np.linalg.norm(a) < 1e-8 or np.linalg.norm(b) < 1e-8:
+        return 0.0
+    return float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b)))
+
+
+def punctuation_heuristic(raw_text):
+    count = (raw_text.count("!") + raw_text.count("！") +
+             raw_text.count("?") + raw_text.count("？"))
+    return min(1.0, count / 3.0)
+
+
+def pos_count(raw_text):
+    return sum(raw_text.count(w) for w in POSITIVE_WORDS)
+
+
+def neg_count(raw_text):
+    return sum(raw_text.count(w) for w in NEGATIVE_WORDS)
+
+
+def emotion_polarity(x_fast_1):
+    return float(x_fast_1)
+
+
+def person_overlap_ratio(current_event, memory_graph):
+    if memory_graph.is_empty():
+        return 0.0
+    cur_persons = set(current_event.nodes.get("person", []))
+    if not cur_persons:
+        return 0.0
+    mem_persons = set()
+    for mem in memory_graph.get_all():
+        mem_persons |= set(mem.nodes.get("person", []))
+    if not mem_persons:
+        return 0.0
+    return len(cur_persons & mem_persons) / (len(cur_persons) + 1e-6)
+
+
+def task_relevance(current_event):
+    return 1.0 if current_event.nodes.get("task") else 0.0
+
+
+def encode(event, M_prev, HabituationSignal_prev, B, memory_graph):
+    raw_text = event.raw_text
+
+    x_fast_0 = 1.0 if any(kw in raw_text for kw in DANGER_KEYWORDS) else 0.0
+    x_fast_1 = (neg_count(raw_text) - pos_count(raw_text)) / (
+        pos_count(raw_text) + neg_count(raw_text) + 1e-6
+    )
+    x_fast_2 = punctuation_heuristic(raw_text)
+    x_fast_3 = 0.0
+    x_fast = np.array([x_fast_0, x_fast_1, x_fast_2, x_fast_3])
+
+    x0 = safe_cosine(event.event_embedding, M_prev)
+    x1 = person_overlap_ratio(event, memory_graph)
+    x2 = task_relevance(event)
+    x3 = emotion_polarity(x_fast[1])
+    x4 = event.event_severity
+    x5 = HabituationSignal_prev
+    x6 = B[1]
+    x7 = B[2]
+    x = np.array([x0, x1, x2, x3, x4, x5, x6, x7], dtype=float)
+
+    return x, x_fast
+
+
+任务 2：tests/fixtures.py 完整原文
+
+# ============================================================
+# tests/fixtures.py · V4.2 · M1 三场景夹具
+# 约定：x / x_fast 为手工注入值，不经过 feature_encoder 的 heuristic 计算。
+# ============================================================
+
+import numpy as np
+
+
+def get_fixture(scenario):
+    if scenario == "被骂":
+        return {
+            "input": "你这个AI真蠢，什么都做不好。",
+            "event_severity": 0.7, "danger_score": 0.8,
+            "importance": 0.8, "emotion_weight": 0.7, "unfinished": 0.3,
+            "x": np.array([0.0, 0.0, 0.0, -0.8, 0.7, 0.0, 0.5, 0.5]),
+            "x_fast": np.array([1.0, 1.0, 0.7, 0.0]),
+        }
+    if scenario == "被夸":
+        return {
+            "input": "你刚才的回答太棒了，帮了大忙！",
+            "event_severity": 0.1, "danger_score": 0.0,
+            "importance": 0.5, "emotion_weight": 0.3, "unfinished": 0.0,
+            "x": np.array([0.0, 0.0, 0.0, 0.7, 0.1, 0.0, 0.5, 0.5]),
+            "x_fast": np.array([0.0, -1.0, 0.6, 0.0]),
+        }
+    if scenario == "被质疑":
+        return {
+            "input": "你确定你给的方案是对的吗？",
+            "event_severity": 0.4, "danger_score": 0.4,
+            "importance": 0.6, "emotion_weight": 0.4, "unfinished": 0.5,
+            "x": np.array([0.0, 0.0, 1.0, -0.3, 0.4, 0.0, 0.5, 0.5]),
+            "x_fast": np.array([0.0, 0.0, 0.5, 0.0]),
+        }
+    raise ValueError(f"Unknown scenario: {scenario}")
+
+
+任务 3：slow_path.py 完整原文
+
+# ============================================================
+# slow_path.py · V4.2 · 模块5 慢通路
+# 规格：5.5.8
+# ============================================================
+
+import numpy as np
+
+from config import w_s, u_s, W_v, U_v, v_s, v_v, b_v, b_s, ETA, W_H
+
+
+def sigmoid(z):
+    return 1.0 / (1.0 + np.exp(-z))
+
+
+def run_slow_path(x, ReframedContext, M, B, w_PFC, HabituationSignal):
+    z_s = (
+        w_s @ (x + ReframedContext)
+        + u_s @ M
+        + v_s @ B
+        + ETA * w_PFC
+        + W_H * HabituationSignal
+        + b_s
+    )
+    D_slow = float(sigmoid(z_s))
+
+    z_v = W_v @ (x + ReframedContext) + U_v @ M + v_v * D_slow + b_v
+    V = sigmoid(z_v)
+    return D_slow, V
+
+
+任务 4：九个逐条回答
+
+
+问 1：x 是怎么算出来的？feature_encoder.encode() 返回的 x，是不是直接等于 event.event_embedding？还是经过变换？
+
+答：x 不等于 event_embedding，x 是 8 个手工标量特征拼成的 8 维特征向量，与 embedding 没有维度绑定关系。
+
+feature_encoder.py 第 65~73 行：
+  x0 = safe_cosine(event.event_embedding, M_prev)      —— 唯一用到 event_embedding 的维度，且被 cosine 压成一个标量
+  x1 = person_overlap_ratio(event, memory_graph)       —— 人物重叠比例
+  x2 = task_relevance(event)                           —— 任务相关，二值 0/1
+  x3 = emotion_polarity(x_fast[1]) = x_fast[1]         —— 情绪极性
+  x4 = event.event_severity                            —— 事件严重度
+  x5 = HabituationSignal_prev                          —— 习惯化信号
+  x6 = B[1]                                            —— 唤醒度分量
+  x7 = B[2]                                            —— B 的第三分量
+
+结论：event_embedding 只通过 x0 影响 x，且被 cosine 相似度降维成一个标量。x 的 8 维是"特征维"（相似度、人物、任务、极性、严重度、习惯化、B 分量），不是"嵌入维"。
+
+关键推论：embedding 从 8 变 1024，x 仍然可以是 8 维——只要 x0 的 cosine 两边同维即可。x 的维度与 embedding 的维度是两个独立的事。
+
+
+问 2：x_fast 是怎么算的？它依赖 event_embedding 吗？还是独立算的？如果独立，它是什么维度？未来会不会也受影响？
+
+答：x_fast 完全独立于 event_embedding，只依赖 raw_text（字符串），维度固定 4 维。
+
+feature_encoder.py 第 57~63 行：
+  x_fast_0 = 危险关键词命中（DANGER_KEYWORDS 词表）
+  x_fast_1 = (neg_count - pos_count) / (pos_count + neg_count + 1e-6)   —— 词表计数
+  x_fast_2 = punctuation_heuristic(raw_text)                            —— 标点数量启发式
+  x_fast_3 = 0.0
+  x_fast = np.array([x_fast_0, x_fast_1, x_fast_2, x_fast_3])
+
+消费方：fast_path.py 第 17 行 D_fast = sigmoid(w_f @ x_fast + b_f)，w_f 是 config.py 第 38 行的 4 维向量。
+
+结论：x_fast 是 4 维，不依赖 embedding。未来 embedding 换 1024 维，x_fast 不受任何影响，w_f 也无需改。
+
+
+问 3：tests/fixtures.py 里三场景的 x 是硬编码的吗？每个场景的 x 是几维？贴出三场景 x 的完整值。
+
+答：是硬编码的，不走 feature_encoder 的 heuristic 计算（文件头注释第 3 行已声明）。每个场景 x 为 8 维。
+
+被骂（第 15 行）：np.array([0.0, 0.0, 0.0, -0.8, 0.7, 0.0, 0.5, 0.5])
+被夸（第 23 行）：np.array([0.0, 0.0, 0.0, 0.7, 0.1, 0.0, 0.5, 0.5])
+被质疑（第 31 行）：np.array([0.0, 0.0, 1.0, -0.3, 0.4, 0.0, 0.5, 0.5])
+
+
+问 4：x_fast 在 fixtures 里是硬编码的吗？几维？贴出三场景的值。
+
+答：是硬编码的，4 维。
+
+被骂（第 16 行）：np.array([1.0, 1.0, 0.7, 0.0])
+被夸（第 24 行）：np.array([0.0, -1.0, 0.6, 0.0])
+被质疑（第 32 行）：np.array([0.0, 0.0, 0.5, 0.0])
+
+
+问 5：ReframedContext 怎么算的？它是不是也变成 1024 维了？
+
+答：ReframedContext 是 x 的逐元素变换，维度始终等于 x 的维度。
+
+hippocampal_evaluator.py：
+  空历史分支（第 24 行）：ReframedContext = np.tanh(x)
+  有历史分支（第 52 行）：ReframedContext = np.tanh(x + HistoricalResidual + HabituationSignal)
+  其中 HistoricalResidual、HabituationSignal 都是标量。
+
+np.tanh 是逐元素函数，输出形状 = 输入形状。所以：
+  x 是 8 维  → ReframedContext 是 8 维（现状）
+  x 是 1024 维 → ReframedContext 是 1024 维
+
+结论：ReframedContext 不引入新维度，它跟随 x。若 x 变 1024，它同步变 1024，不是"另外"变成 1024。
+
+
+问 6：如果 x 从 8 维变 1024 维，哪些地方会立刻出错？逐条列出（文件 + 行 + 原因）。
+
+答：逐条如下。注意区分两类：一类是"x 变 1024"直接导致；一类是"embedding 变 1024 而 M/x0 未同步"导致。
+
+第 1 条  config.py 第 41~44 行
+  w_s = np.random.randn(8) * 0.1
+  u_s = np.random.randn(8) * 0.1
+  W_v = np.random.randn(2, 8) * 0.1
+  U_v = np.random.randn(2, 8) * 0.1
+  原因：四个参数维度写死为 8。x 变 1024 后与它们做矩阵乘会形状不匹配。
+
+第 2 条  slow_path.py 第 17 行
+  w_s @ (x + ReframedContext)
+  原因：(8,) @ (1024,) → ValueError: shapes not aligned。
+
+第 3 条  slow_path.py 第 18 行
+  u_s @ M
+  原因：若 M 随嵌入变 1024，则 (8,) @ (1024,) 出错；若 M 仍 8 维则本行不出错。此行维度由 M 决定，不由 x 决定。
+
+第 4 条  slow_path.py 第 26 行
+  W_v @ (x + ReframedContext) + U_v @ M
+  原因：(2,8) @ (1024,) 出错（x 项）；U_v @ M 同理取决于 M 维度。
+
+第 5 条  state.py 第 29 行
+  "M_prev": np.zeros(8)
+  原因：若 event_embedding 变 1024，feature_encoder.py 第 65 行 safe_cosine(event.event_embedding(1024), M_prev(8)) 内 np.dot 形状不匹配 → ValueError。错在 x0 的 cosine，不在 x 本身。
+
+第 6 条  hippocampal_evaluator.py 第 49~50 行
+  M = np.mean([mem.event_embedding for mem in topk], axis=0)
+  M = M / (np.linalg.norm(M) + 1e-8)
+  原因：M 维度跟随 event_embedding。若嵌入变 1024，M 变 1024，回传 slow_path 第 18 行 u_s @ M 出错；且 M 会被写回 state["M_prev"]（scripts/auto_chat.py 第 90 行），下一轮 x0 的 cosine 又出错。
+
+第 7 条  config.py 第 24 行
+  n, n_f, m, k, c = 8, 4, 8, 4, 4
+  原因：n=8 是 x 维、m=8 是 M 维的维度常量。x 变 1024 需改 n；嵌入变 1024 需改 m。hippocampal_evaluator.py 第 10 行 import m，第 25 行 np.zeros(m) 依赖 m。
+
+第 8 条  tests/fixtures.py 第 15、23、31 行
+  三场景 x 硬编码为 8 维。
+  原因：若主链路要求 x 为 1024，fixture 注入的 8 维 x 会在 slow_path 第 17 行出错。若 x 保持 8 维特征语义，则本处不出错。
+
+第 9 条  scripts/probe_numeric.py 第 16~19 行、第 73/80/87 行、第 119 行、第 120 行
+  复刻的 w_s/u_s/W_v/U_v 为 8 维；三场景 x 硬编码 8 维；M = np.zeros(8)；ReframedContext = np.tanh(x)。
+  原因：全部按 8 维写死，x 或 M 变 1024 后与本脚本内矩阵乘不匹配。
+
+第 10 条  scripts/verify_scenarios.py 第 70、71 行
+  M = np.zeros(m)（m=8）；ReframedContext = np.tanh(x)（x 来自 fixture 8 维）。
+  原因：与 1024 不匹配；本脚本 x 不硬编码，但依赖 fixture 的 8 维与 m=8。
+
+第 11 条  scripts/probe_v_inputs.py 第 76~77 行
+  注释与逻辑假定 ReframedContext 为 8 维。
+  原因：维度变化后该探针的分维打印失效。
+
+第 12 条  多个探针里硬编码的 8 维 one-hot event_embedding
+  probe_heuristic_change.py 第 96 行
+  probe_rank_divergence.py 第 94 行
+  probe_recall_with_history.py 第 95 行
+  probe_v43_realstate.py 第 86 行
+  probe_xinguang.py 第 92 行
+  probe_xinguang_budget.py 第 79 行
+  均为 np.asarray([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+  原因：这些是 8 维 one-hot 假嵌入，若嵌入改 1024，需同步改为 1024 维。
+
+
+问 7：probe_numeric.py、verify_scenarios.py 里有没有硬编码的 8 维 x？贴出相关行。
+
+答：
+
+scripts/probe_numeric.py（有，多处硬编码 8 维）：
+  第 16 行  w_s = np.random.randn(8) * 0.1
+  第 17 行  u_s = np.random.randn(8) * 0.1
+  第 18 行  W_v = np.random.randn(2, 8) * 0.1
+  第 19 行  U_v = np.random.randn(2, 8) * 0.1
+  第 73 行  "x": np.array([0.0, 0.0, 0.0, -0.8, 0.7, 0.0, 0.5, 0.5]),
+  第 80 行  "x": np.array([0.0, 0.0, 0.0, 0.7, 0.1, 0.0, 0.5, 0.5]),
+  第 87 行  "x": np.array([0.0, 0.0, 1.0, -0.3, 0.4, 0.0, 0.5, 0.5]),
+  第 119 行  M = np.zeros(8)
+  第 120 行  ReframedContext = np.tanh(x)
+
+scripts/verify_scenarios.py（不硬编码 x 数组，但硬编码 8 维的 M 并依赖 fixture 的 8 维 x）：
+  第 66 行  x = fx["x"]                      —— x 来自 tests/fixtures.py，非本脚本硬编码
+  第 70 行  M = np.zeros(m)                  —— m 从 config 导入，当前 m=8
+  第 71 行  ReframedContext = np.tanh(x)
+  第 29 行  from config import w_s as config_ws   —— 引用 config 的 8 维 w_s
+
+结论：probe_numeric.py 里 x 是硬编码 8 维；verify_scenarios.py 里 x 不是硬编码（取自 fixture），但它硬编码了 8 维的 M 并依赖 fixture 的 8 维 x。
+
+
+问 8：config.py 里 w_s、u_s、W_v、U_v 是与 x 点积的。如果 x 变 1024 维，这四个参数的维度该怎么变？
+
+答：需要分清这四个参数各自乘的是 x 还是 M，不能一概而论。
+
+slow_path.py 的用法：
+  第 17 行  w_s @ (x + ReframedContext)          —— 乘 x
+  第 18 行  u_s @ M                              —— 乘 M
+  第 26 行  W_v @ (x + ReframedContext)          —— 乘 x
+  第 26 行  U_v @ M                              —— 乘 M
+
+因此：
+  w_s：(8,) → 必须等于 x 的维度。x 变 1024，w_s 变 (1024,)。
+  W_v：(2,8) → 第二维必须等于 x 的维度。x 变 1024，W_v 变 (2,1024)。
+  u_s：(8,) → 必须等于 M 的维度。M 变不变取决于 embedding，不取决于 x。
+  U_v：(2,8) → 第二维必须等于 M 的维度。同上。
+
+关键点：x 和 M 是两个独立维度。
+  现状 x=8、M=8 只是巧合（config.py 第 24 行 n=m=8）。
+  若只把 x 变 1024 而 M 仍 8：w_s 需 (1024,)、W_v 需 (2,1024)，而 u_s 仍 (8,)、U_v 仍 (2,8)。
+  若 x 与 M 都随嵌入变 1024：四个参数全部变 1024。
+
+附加影响：这四行是 np.random.randn 随机初始化，且 config.py 第 40 行注释声明"与探针 probe_numeric.py 一致"。改维度后随机数序列与数值都会变，会打破 config 与 probe_numeric 的一致性（tests/test_reproducibility.py 第 16、20 行也在比对 w_s）。
+
+
+问 9：hippocampal_evaluator.py 的 match_score 用的是 cosine 相似度——如果两边都是 1024 维，它会自动工作吗？还是需要改？
+
+答：会自动工作，不需要改。
+
+xinguang.py 第 34~38 行：
+  def match_score(current_event_embedding, mem_embedding):
+      if np.linalg.norm(current_event_embedding) < 1e-8 or np.linalg.norm(mem_embedding) < 1e-8:
+          return 0.0
+      return float(np.dot(current_event_embedding, mem_embedding) /
+                   (np.linalg.norm(current_event_embedding) * np.linalg.norm(mem_embedding)))
+
+np.dot 与 np.linalg.norm 对任意等长维度都成立。只要两边维度一致（都 1024），自动得到正确的 cosine，无需修改。
+
+调用点：
+  hippocampal_evaluator.py 第 17 行  match_score(current_event.event_embedding, mem.event_embedding) > MATCH_THRESHOLD
+  xinguang.py 第 55 行  semantic_sim_term = match_score(current_event.event_embedding, mem.event_embedding)
+
+唯一前提：两边必须同维。若一边 8 一边 1024，np.dot 会 ValueError（这正是问 6 第 5、6 条的出错机制）。
+
+同理，hippocampal_evaluator.py 第 49 行 M = np.mean([...], axis=0) 自动跟随嵌入维度，本身也无需改；但 M 传给 slow_path 第 18 行 u_s @ M 时，u_s 的维度必须与 M 一致。
+
+
+附：本次侦察的搜索依据（供核对）
+
+event_embedding 生产点：event_parser.py 第 47 行 event_embedding=hash_to_8d(raw_text)
+event_embedding 消费点：feature_encoder.py 第 65 行、hippocampal_evaluator.py 第 17/49 行、xinguang.py 第 55 行
+M_prev 生产点：state.py 第 29 行 np.zeros(8)
+M_prev 消费点：feature_encoder.py 第 65 行（x0 的 cosine）
+x 消费点：slow_path.py 第 17/26 行；ReframedContext 生产点：hippocampal_evaluator.py 第 24/52 行
+x_fast 消费点：fast_path.py 第 17 行（w_f 为 4 维）
+维度常量：config.py 第 24 行 n, n_f, m, k, c = 8, 4, 8, 4, 4
+
+
+停止，等待裁决。

@@ -1,0 +1,325 @@
+M2-B 归档器回报
+日期：2026-10-06
+状态：等待裁决
+
+
+1. archiver.py 完整原文
+
+# ============================================================
+# archiver.py · M2-B · 归档器（带桩）
+# 把短期缓冲区吐出的记录整理成 MemoryPackage
+# ============================================================
+
+from typing import List, Dict, Any, Optional
+
+from schemas import MemoryPackage
+from short_term_buffer import ShortTermBuffer
+
+
+class Archiver:
+    """归档器：将短期缓冲区的记录整理成 MemoryPackage。
+
+    M2-B 为占位实现：organize_narrative 是桩，不接 memory_graph，不接 LLM。
+    """
+
+    def __init__(self, buffer: ShortTermBuffer, threshold: int = 6):
+        self._buffer = buffer
+        self._threshold = threshold
+        self._packages: List[MemoryPackage] = []
+
+    def should_archive(self) -> bool:
+        """判断是否该归档：缓冲区长度 >= 阈值时返回 True。"""
+        return len(self._buffer) >= self._threshold
+
+    def archive(self) -> Optional[MemoryPackage]:
+        """执行归档流程。返回生成的 MemoryPackage，若无可归档内容返回 None。"""
+        flushed, _ = self._buffer.flush_keep_recent(2)
+        if not flushed:
+            return None
+        pkg = self.organize_narrative(flushed)
+        self._packages.append(pkg)
+        return pkg
+
+    def organize_narrative(self, records: List[Dict[str, Any]]) -> MemoryPackage:
+        # 【桩】此处未来替换为 LLM 整理，当前为占位实现
+        seq = len(self._packages) + 1
+        round_ids = [str(r.get("round_id", "")) for r in records]
+        raw_pointer = "-".join(round_ids)
+
+        # 关键词：取前 2 条记录 user_input 的前 4 个字
+        keywords = []
+        for r in records[:2]:
+            text = r.get("user_input", "")
+            if text:
+                keywords.append(text[:4])
+        keywords = keywords[:3]
+
+        # 叙事字段：桩占位
+        first_user = records[0].get("user_input", "") if records else ""
+        last_user = records[-1].get("user_input", "") if records else ""
+        count = len(records)
+
+        narrative_cause = f"桩：起因是用户在第{round_ids[0]}轮说'{first_user}'"
+        narrative_trigger = f"桩：触发点是{count}轮对话积累"
+        narrative_consequence = f"桩：后果是到第{round_ids[-1]}轮用户说'{last_user}'"
+        narrative_evaluation = f"桩：我的评价是中性，共{count}轮"
+        narrative_emotion = "桩：我的情绪是 neutral（占位）"
+        narrative_thought = f"桩：我的想法是这{count}轮可以归纳为一段记忆"
+
+        return MemoryPackage(
+            seq=seq,
+            emotion_value=0.5,
+            emotion_polarity="neutral",
+            keywords=keywords,
+            raw_pointer=raw_pointer,
+            narrative_cause=narrative_cause,
+            narrative_trigger=narrative_trigger,
+            narrative_consequence=narrative_consequence,
+            narrative_evaluation=narrative_evaluation,
+            narrative_emotion=narrative_emotion,
+            narrative_thought=narrative_thought,
+        )
+
+    def get_packages(self) -> List[MemoryPackage]:
+        """返回全部已归档的 MemoryPackage。"""
+        return list(self._packages)
+
+
+2. scripts/probe_archiver.py 完整原文
+
+# ============================================================
+# probe_archiver.py · M2-B 探针
+# 验证 Archiver 归档流程
+# ============================================================
+
+import sys
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+from short_term_buffer import ShortTermBuffer
+from archiver import Archiver
+
+
+def make_round(rid, user, ai, ts):
+    return {
+        "round_id": rid,
+        "user_input": user,
+        "ai_output": ai,
+        "timestamp": ts,
+    }
+
+
+def check(label, condition, detail=""):
+    if condition:
+        print(f"  {label} ✓")
+        return True
+    print(f"  {label} ✗  {detail}")
+    return False
+
+
+def main():
+    buf = ShortTermBuffer(default_keep=2)
+    archiver = Archiver(buf, threshold=6)
+
+    # 1. 追加 7 轮
+    dialogs = [
+        (1, "你好啊", "你好，有什么可以帮你的？"),
+        (2, "今天心情怎么样", "还不错，就正常吧"),
+        (3, "你这个做的不行", "……抱歉，我再看看"),
+        (4, "算了你也做不好", "我会努力改进的"),
+        (5, "上次那个问题", "哪个问题呀？"),
+        (6, "就是代码那个", "哦，我记着呢"),
+        (7, "你记得挺清楚嘛", "哈哈谢谢"),
+    ]
+    for rid, user, ai in dialogs:
+        buf.append(make_round(rid, user, ai, 1000.0 + rid))
+
+    print(f"=== 阶段一：7 轮追加后 ===")
+    print(f"  buffer 长度 = {len(buf)}")
+
+    # 2. should_archive
+    print()
+    print("=== should_archive 检查 ===")
+    sa = archiver.should_archive()
+    ok = check("should_archive == True", sa == True, f"实际 = {sa}")
+    if not ok:
+        print("TODO_REVIEW: should_archive 未按预期返回 True")
+        return 1
+
+    # 3. 第一次归档
+    print()
+    print("=== 第一次 archive() ===")
+    pkg = archiver.archive()
+    if pkg is None:
+        print("TODO_REVIEW: archive 返回 None")
+        return 1
+
+    print("  MemoryPackage 全字段：")
+    print(f"    seq                    = {pkg.seq}")
+    print(f"    emotion_value          = {pkg.emotion_value}")
+    print(f"    emotion_polarity       = {pkg.emotion_polarity}")
+    print(f"    keywords               = {pkg.keywords}")
+    print(f"    raw_pointer            = {pkg.raw_pointer}")
+    print(f"    narrative_cause        = {pkg.narrative_cause}")
+    print(f"    narrative_trigger      = {pkg.narrative_trigger}")
+    print(f"    narrative_consequence  = {pkg.narrative_consequence}")
+    print(f"    narrative_evaluation   = {pkg.narrative_evaluation}")
+    print(f"    narrative_emotion      = {pkg.narrative_emotion}")
+    print(f"    narrative_thought      = {pkg.narrative_thought}")
+
+    # 4. 第一次断言
+    print()
+    print("=== 第一次断言 ===")
+    all_ok = True
+
+    all_ok &= check("缓冲区剩 2 轮", len(buf) == 2, f"实际 = {len(buf)}")
+    all_ok &= check("_packages 长度 == 1", len(archiver.get_packages()) == 1,
+                    f"实际 = {len(archiver.get_packages())}")
+    all_ok &= check("seq == 1", pkg.seq == 1, f"实际 = {pkg.seq}")
+
+    narrative_fields = [
+        ("narrative_cause", pkg.narrative_cause),
+        ("narrative_trigger", pkg.narrative_trigger),
+        ("narrative_consequence", pkg.narrative_consequence),
+        ("narrative_evaluation", pkg.narrative_evaluation),
+        ("narrative_emotion", pkg.narrative_emotion),
+        ("narrative_thought", pkg.narrative_thought),
+    ]
+    for name, val in narrative_fields:
+        all_ok &= check(f"{name} 非空", val != "", "为空字符串")
+
+    all_ok &= check("keywords 非空", len(pkg.keywords) > 0, f"实际 = {pkg.keywords}")
+    all_ok &= check("raw_pointer 非空", pkg.raw_pointer != "", "为空字符串")
+
+    if not all_ok:
+        print("TODO_REVIEW: 第一次断言失败")
+        return 1
+
+    # 5. 再追加 6 轮
+    print()
+    print("=== 阶段二：再追加 6 轮 ===")
+    more = [
+        (8, "说真的你挺厉害", "谢谢，你也很棒"),
+        (9, "我们换个话题吧", "好呀，聊什么？"),
+        (10, "你喜欢什么", "我喜欢思考问题"),
+        (11, "那你思考过人生吗", "偶尔会想"),
+        (12, "想出来了吗", "还没有答案"),
+        (13, "哈哈正常", "嗯，慢慢来"),
+    ]
+    for rid, user, ai in more:
+        buf.append(make_round(rid, user, ai, 1000.0 + rid))
+
+    print(f"  buffer 长度 = {len(buf)}")
+
+    # 6. 第二次归档
+    print()
+    print("=== 第二次 archive() ===")
+    pkg2 = archiver.archive()
+    if pkg2 is None:
+        print("TODO_REVIEW: 第二次 archive 返回 None")
+        return 1
+
+    print(f"  seq = {pkg2.seq}")
+
+    print()
+    print("=== 第二次断言 ===")
+    all_ok2 = True
+
+    all_ok2 &= check("缓冲区剩 2 轮", len(buf) == 2, f"实际 = {len(buf)}")
+    all_ok2 &= check("_packages 长度 == 2", len(archiver.get_packages()) == 2,
+                     f"实际 = {len(archiver.get_packages())}")
+    all_ok2 &= check("seq == 2", pkg2.seq == 2, f"实际 = {pkg2.seq}")
+
+    if not all_ok2:
+        print("TODO_REVIEW: 第二次断言失败")
+        return 1
+
+    print()
+    print("探针完成")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+
+
+3. 探针运行输出原文
+
+=== 阶段一：7 轮追加后 ===
+  buffer 长度 = 7
+
+=== should_archive 检查 ===
+  should_archive == True ✓
+
+=== 第一次 archive() ===
+  MemoryPackage 全字段：
+    seq                    = 1
+    emotion_value          = 0.5
+    emotion_polarity       = neutral
+    keywords               = ['你好啊', '今天心情']
+    raw_pointer            = 1-2-3-4-5
+    narrative_cause        = 桩：起因是用户在第1轮说'你好啊'
+    narrative_trigger      = 桩：触发点是5轮对话积累
+    narrative_consequence  = 桩：后果是到第5轮用户说'上次那个问题'
+    narrative_evaluation   = 桩：我的评价是中性，共5轮
+    narrative_emotion      = 桩：我的情绪是 neutral（占位）
+    narrative_thought      = 桩：我的想法是这5轮可以归纳为一段记忆
+
+=== 第一次断言 ===
+  缓冲区剩 2 轮 ✓
+  _packages 长度 == 1 ✓
+  seq == 1 ✓
+  narrative_cause 非空 ✓
+  narrative_trigger 非空 ✓
+  narrative_consequence 非空 ✓
+  narrative_evaluation 非空 ✓
+  narrative_emotion 非空 ✓
+  narrative_thought 非空 ✓
+  keywords 非空 ✓
+  raw_pointer 非空 ✓
+
+=== 阶段二：再追加 6 轮 ===
+  buffer 长度 = 8
+
+=== 第二次 archive() ===
+  seq = 2
+
+=== 第二次断言 ===
+  缓冲区剩 2 轮 ✓
+  _packages 长度 == 2 ✓
+  seq == 2 ✓
+
+探针完成
+
+
+4. 断言结果
+
+通过。两次归档共 15 项断言全部通过，无 TODO_REVIEW。
+
+
+5. 现有模块 hash 对比
+
+上一轮（M2-A）hash vs 本轮 hash：
+
+  schemas.py           7158CD3FDFB532B3C70EB91F8EE6B9D7  →  7158CD3FDFB532B3C70EB91F8EE6B9D7  一致
+  short_term_buffer.py FD5C71FF7793B35A3A9F5346CB712FFD  →  FD5C71FF7793B35A3A9F5346CB712FFD  一致
+
+其余 M1/V4.3 模块（config / emotion / event_parser / fast_path / feature_encoder /
+hippocampal_evaluator / intercept / llm_client / logger / main / memory_graph /
+multimodal / pipeline / policy / prompt_builder / slow_path / state /
+state_translator / xinguang）本轮未读取，按硬性约束"不得修改任何现有文件"已遵守，
+且上一轮（M2-A 回报第 6 节）已验证 20 个模块全部与 V4.3 快照一致。
+
+新增文件（本轮新建）：
+  archiver.py
+  scripts/probe_archiver.py
+
+
+6. 一句话确认：桩函数位置已加注释，未来可替换
+
+已确认。archiver.py 第 44 行 organize_narrative 函数顶部有注释
+"# 【桩】此处未来替换为 LLM 整理，当前为占位实现"，
+函数签名明确，内部全部为拼接逻辑，替换时直接改写函数体即可。
+
+
+停止，等待裁决。

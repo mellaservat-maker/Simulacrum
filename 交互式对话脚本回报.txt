@@ -1,0 +1,34 @@
+交互式命令行对话脚本回报
+日期：2026-10-06
+状态：等待裁决
+
+
+1. scripts/chat_cli.py 完整原文
+
+完整路径：d:\aiqg\emotion_agent\scripts\chat_cli.py
+
+代码要点：
+- chat_turn(st, user_input)：单轮执行函数，完整复刻 run_turn 逻辑
+  - 用 event_parse 构造事件，event_severity/importance/emotion_weight 等为默认值（标有【M2 临时默认值】注释）
+  - feature_mode = encoder，真实输入走特征编码
+  - 心光预算 → 海马体评估 → 快慢通路 → 情绪释放 → 情绪加点 → 拦截 → 策略 → 状态翻译 → prompt → LLM
+  - 回写识海
+  - 写入侧：每轮写 buffer，达阈值归档
+  - 返回 (llm_output, action)
+
+- main()：交互主循环
+  - reset_state(seed=42) 初始化
+  - input() 拿用户输入
+  - 空输入给友好提示
+  - "退出/quit/exit" 退出
+  - 出错打印错误信息但不退出循环
+  - 每轮显示缓冲区条数 / 归档包数
+  - 结束时打印总归档数
+
+
+2. 一句话确认
+
+未修改任何现有文件，仅新建 scripts/chat_cli.py。
+
+
+停止，等待裁决。

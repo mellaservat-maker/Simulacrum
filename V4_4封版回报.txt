@@ -1,0 +1,122 @@
+V4.4 封版回报
+日期：2026-10-06
+状态：等待裁决
+
+
+1. config.py 新增的版本记录原文
+
+# ============================================================
+# 版本记录
+# V4.2  M1 封版（情绪 + 自控，三场景通过）
+# V4.3  接入 competition_score 至 hippocampal_evaluator
+# V4.4  M2 封版：记忆通路 + 接真 LLM + 提示词修正 + 读取侧开启
+#       核心能力：每轮写缓冲区、攒够归档、按器官解压、召回可见
+#       已知限制：L1~L24
+#       M2 TODO：T1~T26
+#       快照：_snapshot_v44
+# ============================================================
+
+（位于文件头注释下方、import numpy as np 上方）
+
+
+2. V4.4 快照目录路径与文件总数
+
+路径：d:\aiqg\emotion_agent_snapshot_v44\
+文件总数：90
+
+
+3. secrets_local.py 是否在快照目录中
+
+否。已确认不在快照目录中。
+
+
+4. config.py 在工作目录与快照目录的 hash
+
+工作目录 config.py：9466A353AEB269AA
+快照目录 config.py：9466A353AEB269AA
+一致：是
+
+
+5. 四份快照的目录路径与文件数
+
+_snapshot_m1_pass:
+  路径：d:\aiqg\emotion_agent_snapshot_m1_pass\
+  文件数：37
+
+_snapshot_v43:
+  路径：d:\aiqg\emotion_agent_snapshot_v43\
+  文件数：45
+
+_snapshot_m2_mock:
+  路径：d:\aiqg\emotion_agent_snapshot_m2_mock\
+  文件数：71
+
+_snapshot_v44:
+  路径：d:\aiqg\emotion_agent_snapshot_v44\
+  文件数：90
+
+三份旧快照未被触碰。
+
+
+6. V4.4 hash 基准表（全部 .py 文件，SHA256 前 16 位，按文件名排序）
+
+文件名 | SHA256 前 16 位
+tests\__init__.py | E3B0C44298FC1C14
+archiver.py | F7B5AFB2D121B4C8
+scripts\auto_chat.py | 4BA3C4DE6087DFC9
+scripts\chat_cli.py | BC4AE2CC74AC004E
+config.py | 9466A353AEB269AA
+decompressor.py | C2D21C7D882F278E
+emotion.py | 5C3B62AE2F1F2116
+emotion_releaser.py | 98FC7D769E003194
+event_parser.py | BD7F71EAB7F1264C
+fast_path.py | 25D837BF496060BD
+feature_encoder.py | 7E960C11F2D54FD3
+tests\fixtures.py | D8E676625B5CF4CE
+hippocampal_evaluator.py | 4B7317DE2B03F7CF
+intercept.py | F594D53EDADBC353
+llm_client.py | A2ADA2B77F02C4D1
+logger.py | 76A179D173979B1D
+main.py | A580118515DBF54C
+memory_graph.py | FD7FB1058E22F8D9
+multimodal.py | 6C2978D1A872E615
+pipeline.py | EDC1F26A8720584B
+policy.py | 0E541AF602A60E9A
+scripts\probe_archiver.py | A7D263E1283AC1CE
+scripts\probe_buffer.py | AFB82DE983DA51F3
+scripts\probe_decompressor.py | 0A0198EFC4C01F75
+scripts\probe_heuristic_change.py | F3D98A8BF2CBB815
+scripts\probe_llm_switch.py | EAF7273548E74E36
+scripts\probe_memory_pipeline.py | 929FE0AB2D0F6FBF
+scripts\probe_numeric.py | A7BBDD669EB83309
+scripts\probe_prompt_render.py | 710BBFDEE7B8500B
+scripts\probe_rank_divergence.py | 215721FABD15DBC9
+scripts\probe_read_side.py | D59C497E50CECD0D
+scripts\probe_real_prompt.py | 4A649C7711B2CF4A
+scripts\probe_recall_with_history.py | D8FD1862844A2FA7
+scripts\probe_session.py | C6CDF2734DDAB988
+scripts\probe_v43_realstate.py | 7C79AA917181A972
+scripts\probe_xinguang.py | 6F08E5A422AC8DC4
+scripts\probe_xinguang_budget.py | 70D7B9EF08A04C12
+prompt_builder.py | 15DE0D3EEA9C8D1E
+raw_log.py | 29F66391403E9A99
+scripts\run_real_llm_check.py | E00CD6BEEBDD0D39
+schemas.py | 1EFEA80C332E6E09
+short_term_buffer.py | 6012DC2F7211622E
+slow_path.py | 34540EF43E1CE240
+state.py | BD6E89D417F737AA
+state_translator.py | A5F0552D2E5DC3A8
+tests\test_feature_encoder.py | 78C9F71F0B205E74
+tests\test_full_pipeline_smoke.py | 84B3B1B3D0A5C2DB
+tests\test_limits.py | F065D29062FB22C4
+tests\test_memory_writeback.py | 7AEC84A7DD93A329
+tests\test_policy.py | E17BAAE10E8F5D9D
+tests\test_reproducibility.py | 1CCE50D6E6CE7FD7
+tests\test_schemas.py | D2D18FB14DC5C3FC
+tests\test_three_scenarios.py | EA455B944D06CD29
+scripts\verify_scenarios.py | CA05A989743DE7F2
+xinguang.py | 694FCCDA9BDB885E
+
+共 54 个 .py 文件（不含 secrets_local.py）。
+
+停止，等待裁决。

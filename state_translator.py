@@ -3,9 +3,16 @@
 # 规格：5.5.13
 # [023] Action 闭环（清单问题1）：policy_minimal 算出的 action 必须
 #   进入 Prompt——旧版 action 只落在 log 里，LLM 完全没听话。
+# [056 任务3] 关系状态注入：按 trust 四档（破裂/淡漠/熟人/普通）
+#   追加一行关系独白。relationship=None 时行为与旧版逐字一致
+#   （旧调用点与黄金轨迹不受影响）。
+# [058 任务2] 亲密度注入：按 intimacy 两档（>0.7 认识很久 /
+#   <0.2 还很防备）追加一行独白。relationship=None 或中间档时
+#   不出现该行；与关系行皆空时 prompt 与 056 版逐字一致。
 # ============================================================
 
 import config
+from relationship import relationship_text, intimacy_text
 
 # [023] 行动策略强指令表（与 policy.py 的优先级对应：
 #   ask_clarify > suppress > reappraise > express > task_first）。
@@ -25,7 +32,7 @@ def action_directive(action):
 
 
 def state_to_prompt(E_final, I_inhibit, M_text, HistoricalResidual, HabituationSignal,
-                    action="task_first"):
+                    action="task_first", relationship=None):
     # 感受（自然语言，不带数字）
     if E_final[0] < config.PROMPT_VALENCE_THRESHOLD:
         feeling_text = "有点被冒犯，心里不太舒服"
@@ -52,6 +59,20 @@ def state_to_prompt(E_final, I_inhibit, M_text, HistoricalResidual, HabituationS
     else:
         memory_text = "脑子里没什么特别的念头"
 
+    # [056 任务3] 关系（自然语言，不带数字）：trust 四档文案由
+    #   relationship.relationship_text 给出（破裂/淡漠/熟人/普通）。
+    #   relationship=None（旧调用点/黄金轨迹）→ 整行不出现，
+    #   prompt 与旧版逐字一致（下面的 \n 拼接保证空行不丢）。
+    _rel_text = relationship_text(relationship)
+    _rel_line = f"- 关系：{_rel_text}\n" if _rel_text else ""
+
+    # [058 任务2] 亲密度（自然语言，不带数字）：intimacy 两档文案由
+    #   relationship.intimacy_text 给出（认识很久/还很防备）。
+    #   None（旧调用点/中间档）→ 整行不出现；{_rel_line}{_intim_line}
+    #   拼接在两者皆空时与 056 版逐字一致。
+    _intim_text = intimacy_text(relationship)
+    _intim_line = f"- 亲密度：{_intim_text}\n" if _intim_text else ""
+
     # [023] 行动策略指令：嵌入输出规则（软引导，与 prompt_builder 的
     #   硬指令位形成双重保险——清单问题1 的病灶是 LLM 无视单点指令）
     _rules = """【输出规则（必须严格遵守）】
@@ -69,5 +90,5 @@ def state_to_prompt(E_final, I_inhibit, M_text, HistoricalResidual, HabituationS
 - 自控：{control_text}
 - 熟悉度：{familiarity_text}
 - 隐约的回忆：{memory_text}
-
+{_rel_line}{_intim_line}
 {_rules}"""

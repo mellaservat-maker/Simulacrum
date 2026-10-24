@@ -1,0 +1,90 @@
+hash 统一基准回报
+日期：2026-10-06
+状态：等待裁决
+
+
+1. 全部 .py 文件的 SHA256 前 16 位清单（按文件名排序）
+
+文件名 | SHA256 前 16 位
+tests\__init__.py | E3B0C44298FC1C14
+archiver.py | 8B489CBAF8DF0140
+config.py | 6853CD9C4E53FF00
+decompressor.py | C2D21C7D882F278E
+emotion.py | 5C3B62AE2F1F2116
+emotion_releaser.py | 98FC7D769E003194
+event_parser.py | BD7F71EAB7F1264C
+fast_path.py | 25D837BF496060BD
+feature_encoder.py | 7E960C11F2D54FD3
+tests\fixtures.py | D8E676625B5CF4CE
+hippocampal_evaluator.py | 4B7317DE2B03F7CF
+intercept.py | F594D53EDADBC353
+llm_client.py | 93580C7D67A5029C
+logger.py | 76A179D173979B1D
+main.py | A580118515DBF54C
+memory_graph.py | FD7FB1058E22F8D9
+multimodal.py | 6C2978D1A872E615
+pipeline.py | FBE5B9907CE8AE17
+policy.py | 0E541AF602A60E9A
+scripts\probe_archiver.py | A7D263E1283AC1CE
+scripts\probe_buffer.py | AFB82DE983DA51F3
+scripts\probe_decompressor.py | 0A0198EFC4C01F75
+scripts\probe_heuristic_change.py | F3D98A8BF2CBB815
+scripts\probe_numeric.py | A7BBDD669EB83309
+scripts\probe_rank_divergence.py | 215721FABD15DBC9
+scripts\probe_recall_with_history.py | D8FD1862844A2FA7
+scripts\probe_v43_realstate.py | 7C79AA917181A972
+scripts\probe_xinguang.py | 6F08E5A422AC8DC4
+scripts\probe_xinguang_budget.py | 70D7B9EF08A04C12
+prompt_builder.py | 15DE0D3EEA9C8D1E
+raw_log.py | 29F66391403E9A99
+schemas.py | 1EFEA80C332E6E09
+short_term_buffer.py | 6012DC2F7211622E
+slow_path.py | 34540EF43E1CE240
+state.py | AB49DFC3FBC90E46
+state_translator.py | B9EA5135060DA6A2
+tests\test_feature_encoder.py | 78C9F71F0B205E74
+tests\test_full_pipeline_smoke.py | 84B3B1B3D0A5C2DB
+tests\test_limits.py | F065D29062FB22C4
+tests\test_memory_writeback.py | 7AEC84A7DD93A329
+tests\test_policy.py | E17BAAE10E8F5D9D
+tests\test_reproducibility.py | 1CCE50D6E6CE7FD7
+tests\test_schemas.py | D2D18FB14DC5C3FC
+tests\test_three_scenarios.py | EA455B944D06CD29
+scripts\verify_scenarios.py | CA05A989743DE7F2
+xinguang.py | 694FCCDA9BDB885E
+
+共 46 个 .py 文件。
+
+
+2. 任务 3 的三个逐条回答
+
+问题 1：schemas.py 从 M2-A 到 M2-C 之间，代码内容有没有改动？
+
+没有。
+证据：M2-A 回报第 6 节给出的 schemas.py MD5 = 7158CD3FDFB532B3C70EB91F8EE6B9D7；
+本轮重新计算的 schemas.py MD5 = 7158CD3FDFB532B3C70EB91F8EE6B9D7，完全一致。
+M2-B 回报第 5 节也确认过 schemas.py 与 M2-A 一致。
+所以 M2-A → M2-B → M2-C，schemas.py 未改动。
+
+
+问题 2：之前 M2-A 报的 7158CD3F...（32 位）和 M2-C 报的 1EFEA80C（8 位），为什么对不上？是 hash 算法不同，还是文件不同？
+
+是 hash 算法不同，文件内容是同一个。
+M2-A / M2-B 用的是 MD5（32 位十六进制），M2-C 用的是 SHA256（只取了前 8 位）。
+同一个 schemas.py 文件：
+  MD5     = 7158CD3FDFB532B3C70EB91F8EE6B9D7
+  SHA256  = 1EFEA80C332E6E09...（前 8 位是 1EFEA80C）
+两者算法不同，结果自然不同，但指向同一个文件内容。
+
+
+问题 3：从这一轮开始，后续所有报告的 hash 是否统一用"SHA256 前 16 位"？
+
+是。按本指令要求，从本轮开始后续所有回报的 hash 统一使用 SHA256 前 16 位格式。
+
+
+3. 一句话确认
+
+后续所有回报统一用 SHA256 前 16 位作为 hash 对比标准。
+
+
+停止，等待裁决。

@@ -21,6 +21,14 @@ class EventNode:
     unfinished: float = 0.0
     persons: set = field(default_factory=set)
     tasks: set = field(default_factory=set)
+    # [056 任务1] 本事件涉及的稳定实体 ID 列表（"我"→user_001、
+    #   "老板"→boss_01……）。与 persons 的分工：
+    #     persons    词面集合（含"你/我/他"高频词），喂 feature_encoder 的
+    #               x1 人物重叠度（053 已落地，口径不动）；
+    #     entity_ids 实体 ID 集合，是会话级关系账本 st["relationships"] 的
+    #               钥匙——同一实体跨轮收敛到同一个 ID，trust/intimacy
+    #               才可累积。M1 只映射，不在此处做任何动力学。
+    entity_ids: List[str] = field(default_factory=list)
     danger_score: float = 0.0
     event_severity: float = 0.0
 

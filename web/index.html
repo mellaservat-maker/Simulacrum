@@ -734,6 +734,11 @@ body.breakdown .ring-fill{ stroke:#b5432f !important; }
             <div class="vit-row small"><span>焦虑 e3</span><span id="vitE3">+0.00</span></div>
             <div class="vit-sep"></div>
             <div class="vit-row small"><span>危险度 danger / MID</span><span id="vitDanger">0.00 / 0.20</span></div>
+            <!-- [056 任务3] 当前关系：trust / intimacy / 互动轮数 / 破裂标记 -->
+            <div class="vit-row small"><span>信任 trust / 亲密 intimacy</span><span id="vitRelTI">-</span></div>
+            <div class="vit-track"><i id="trkTrust"></i></div>
+            <div class="vit-row small"><span>累计互动</span><span id="vitRelInter">0</span></div>
+            <div class="vit-row small" id="vitRelBrokenRow" style="display:none;"><span>关系</span><span id="vitRelBroken">已破裂</span></div>
             <div class="vit-row small" id="vitActionRow"><span>行动</span><span id="vitAction">task_first</span></div>
             <div class="vit-row small" id="vitCooldownRow" style="display:none;"><span>破防冷却</span><span id="vitCooldown">0</span></div>
             <div class="vit-row small"><span>本轮 tokens</span><span id="vitTok">0</span></div>
@@ -897,6 +902,10 @@ const els = {
   vitPfc: $('#vitPfc'), vitInh: $('#vitInh'), vitVal: $('#vitVal'), vitTok: $('#vitTok'), vitMood: $('#vitMood'),
   vitE1: $('#vitE1'), vitE2: $('#vitE2'), vitE3: $('#vitE3'),
   vitDanger: $('#vitDanger'), vitAction: $('#vitAction'),
+  /* [056] 当前关系栏 */
+  vitRelTI: $('#vitRelTI'), trkTrust: $('#trkTrust'),
+  vitRelInter: $('#vitRelInter'),
+  vitRelBrokenRow: $('#vitRelBrokenRow'), vitRelBroken: $('#vitRelBroken'),
   vitCooldownRow: $('#vitCooldownRow'), vitCooldown: $('#vitCooldown'),
   profileSel: $('#profileSel'), profileHint: $('#profileHint'),
   sessionSel: $('#sessionSel'),
@@ -913,6 +922,8 @@ const S = {
   pfcKnown: false, inhKnown: false, valKnown: false,
   e: [0, 0, 0, 0],
   action: 'task_first', cooldown: 0, danger: 0,
+  /* [056] 当前关系（后端 relationships.user_001；未同步时为初始账本） */
+  rel: { trust: 0.5, intimacy: 0.5, interactions: 0, broken: false },
   profile: 'standard', mid: .20, high: .70, expressInh: .30, expressVal: -.50,
   tokens: 0, turns: 0,
   deepThink: false, webSearch: false,
@@ -1043,6 +1054,19 @@ function paintState(){
   els.vitE2.textContent = (e[2] >= 0 ? '+' : '') + Number(e[2] || 0).toFixed(2);
   els.vitE3.textContent = (e[3] >= 0 ? '+' : '') + Number(e[3] || 0).toFixed(2);
   els.vitDanger.textContent = Number(S.danger || 0).toFixed(2) + ' / ' + Number(S.mid || 0).toFixed(2);
+  /* [056] 当前关系栏：trust / intimacy / 互动轮数 / 破裂标记 */
+  const rel = S.rel;
+  if (rel && Number.isFinite(rel.trust)){
+    els.vitRelTI.textContent = rel.trust.toFixed(2) + ' / ' + rel.intimacy.toFixed(2);
+    els.trkTrust.style.width = (Math.max(0, Math.min(1, rel.trust)) * 100).toFixed(1) + '%';
+    els.vitRelInter.textContent = String(rel.interactions || 0);
+    els.vitRelBrokenRow.style.display = rel.broken ? 'flex' : 'none';
+  } else {
+    els.vitRelTI.textContent = '-';
+    els.trkTrust.style.width = '0%';
+    els.vitRelInter.textContent = '0';
+    els.vitRelBrokenRow.style.display = 'none';
+  }
   els.vitAction.textContent = S.action || 'task_first';
   const express = S.action === 'express';
   els.vitAction.parentElement.classList.toggle('act-express', express);
@@ -1334,6 +1358,19 @@ function normalizeResponse(data){
     expressVal: num(th.express_valence),
     recall: normalizeRecall(data.recall ?? data.memory ?? data.echo),
     usage: num(data.usage?.total_tokens, data.tokens, data.usage),
+    /* [056] 当前关系：取 user_001 条目，字段缺失按初始账本兜底 */
+    rel: normalizeRel(data.relationships ?? st.relationships),
+  };
+}
+function normalizeRel(rels){
+  const u = (rels && typeof rels === 'object') ? rels.user_001 : null;
+  if (!u || typeof u !== 'object') return null;
+  const t = Number(u.trust), i = Number(u.intimacy), n = Number(u.interactions);
+  return {
+    trust: Number.isFinite(t) ? t : 0.5,
+    intimacy: Number.isFinite(i) ? i : 0.5,
+    interactions: Number.isFinite(n) ? n : 0,
+    broken: !!u.broken,
   };
 }
 async function requestBackend(text){
@@ -1557,6 +1594,8 @@ async function sendMessage(text, opts = {}){
   if (data.action) S.action = data.action;
   if (Number.isFinite(data.cooldown)) S.cooldown = data.cooldown;
   if (Number.isFinite(data.danger)) S.danger = data.danger;
+  /* [056] 当前关系随本轮响应更新（后端每轮都带全量账本） */
+  if (data.rel) S.rel = data.rel;
   if (data.profile){ S.profile = data.profile; if (els.profileSel) els.profileSel.value = data.profile; }
   if (Number.isFinite(data.mid)) S.mid = data.mid;
   if (Number.isFinite(data.high)) S.high = data.high;
@@ -1922,6 +1961,9 @@ async function syncServerState(){
     S.valence = S.valKnown ? d.e0 : 0;
     if (d.action) S.action = d.action;
     if (Number.isFinite(d.danger_now)) S.danger = d.danger_now;
+    /* [056] 当前关系：/state 带全量账本，取 user_001 */
+    const rel0 = normalizeRel(d.relationships);
+    if (rel0) S.rel = rel0;
     if (Array.isArray(d.e) && d.e.length >= 4) S.e = d.e.map((x) => Number(x) || 0);
     if (Number.isFinite(d.express_cooldown)) S.cooldown = d.express_cooldown;
     if (d.thresholds){

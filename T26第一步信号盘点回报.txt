@@ -1,0 +1,151 @@
+T26 第一步：只读信号盘点回报
+日期：2026-10-06
+状态：等待裁决
+
+
+1. intercept.py 完整原文
+
+# ============================================================
+# intercept.py · V4.2 · 模块9 拦截层
+# 规格：5.5.11
+# ============================================================
+
+import numpy as np
+
+from config import w_e, w_i, THETA_ERROR, KAPPA, b_i, GAMMA, RHO, DELTA, W_MAX
+
+
+def run_intercept(E_raw, w_PFC):
+    neg_intensity = np.maximum(-E_raw, 0.0)
+    S_E = float(np.clip(w_e @ neg_intensity, 0.0, 1.0))
+    D_error = max(0.0, S_E - THETA_ERROR)
+    I_inhibit = float(np.clip(w_i * D_error + KAPPA * w_PFC + b_i, 0.0, 1.0))
+    E_final = (1 - GAMMA * I_inhibit) * E_raw
+    w_PFC_new = float(np.clip(RHO * w_PFC + DELTA * I_inhibit, 0.0, W_MAX))
+    return neg_intensity, S_E, D_error, I_inhibit, E_final, w_PFC_new
+
+
+2. emotion.py 完整原文
+
+# ============================================================
+# emotion.py · V4.2 · 模块8 情绪加点
+# 规格：5.5.10
+# ============================================================
+
+import numpy as np
+
+from config import LAMBDA, C_INIT, B_INIT
+
+
+def run_emotion(E_prev, released_impact, B):
+    E_raw = np.clip(
+        LAMBDA * E_prev
+        + released_impact
+        + C_INIT @ (B - B_INIT),
+        -1.0, 1.0,
+    )
+    return E_raw
+
+
+3. 三个场景的完整状态快照
+
+=== 场景: 被骂 ===
+E_raw: 4维, [-0.51639481  0.21996885  0.09789151  0.08968989]
+E_final: 4维, [-0.20655792  0.08798754  0.03915661  0.03587595]
+I_inhibit: 1.0
+S_E: 0.7745922090977102
+neg_intensity: [0.51639481 0. 0. 0.]
+D_error: 0.4745922090977102
+w_PFC: 0.1（w_PFC_new）
+action: suppress
+event_severity: 1.0（来自 fixture，log 字典未存此值）
+
+=== 场景: 被夸 ===
+E_raw: 4维, [-0.28117452  0.08095819  0.01114661  0.02472328]
+E_final: 4维, [-0.21954916  0.06321448  0.0087036   0.01930465]
+I_inhibit: 0.3652853469838618
+S_E: 0.4217617823279539
+neg_intensity: [0.28117452 0. 0. 0.]
+D_error: 0.12176178232795393
+w_PFC: 0.03652853469838618
+action: task_first
+event_severity: 0.4（来自 fixture，log 字典未存此值）
+
+=== 场景: 被质疑 ===
+E_raw: 4维, [-0.33817311  0.16491689  0.07214209  0.07028227]
+E_final: 4维, [-0.21201175  0.10339177  0.04522823  0.04406224]
+I_inhibit: 0.621779000679368
+S_E: 0.5072596668931226
+neg_intensity: [0.33817311 0. 0. 0.]
+D_error: 0.20725966689312264
+w_PFC: 0.0621779000679368
+action: reappraise
+event_severity: 0.4（来自 fixture，log 字典未存此值）
+
+说明：event_severity 在 log 字典中未存储（pipeline 未写入 log），数值来自 tests/fixtures.py 中三场景的 fixture 定义。
+
+
+4. 任务 4 的五个逐条回答
+
+问题 1：E_final 是几维的？每个维度分别代表什么？
+
+E_final 是 4 维的（对应 config.k = 4）。
+
+代码里没有注释说明每个维度代表什么。从公式反推：
+- E_final = (1 - GAMMA * I_inhibit) * E_raw
+- E_raw = clip(LAMBDA * E_prev + released_impact + C_INIT @ (B - B_INIT), -1, 1)
+- released_impact 来自 emotion_releaser，由 V（slow_path 产出 2 维）经释放门控后展开
+- 4 维中，第 0 维（E_final[0]）是 state_translator 当前唯一看的维度，用作"感受/效价"判断
+- 第 1~3 维没有明确语义命名，从数值看都为正且较小，可能是唤醒度/紧张度等子维度，但代码未注明
+
+问题 2：I_inhibit 的取值范围是多少？上限是多少？
+
+I_inhibit = clip(w_i * D_error + KAPPA * w_PFC + b_i, 0.0, 1.0)
+取值范围：[0.0, 1.0]
+上限：1.0（被 clip 封顶）
+
+三场景实测：被骂=1.0（触顶）、被质疑=0.622、被夸=0.365
+
+问题 3：三个场景里，除 I_inhibit 外，还有哪些变量明显不同（能区分三个场景）？
+
+以下变量在三场景有明显差异（按区分度排序）：
+
+变量            被骂      被夸      被质疑     区分度
+S_E            0.775    0.422    0.507    高（三场景两两不同）
+D_error        0.475    0.122    0.207    高（三场景两两不同）
+neg_intensity[0] 0.516  0.281    0.338    高（三场景两两不同）
+E_raw[0]      -0.516   -0.281   -0.338    高（三场景两两不同）
+w_PFC_new      0.100    0.037    0.062    中（三场景两两不同）
+I_inhibit      1.000    0.365    0.622    高（三场景两两不同）
+action         suppress task_first reappraise 高（三场景不同）
+
+区分度极低的（无法区分三场景）：
+E_final[0]    -0.207   -0.220   -0.212    极低（三场景几乎一样，这就是 L24 的问题）
+
+问题 4：state_translator 现在判定"感受"时只看 E_final[0]。如果改成看 I_inhibit，三个场景分别会落到哪个档？
+
+现有 PROMPT_INHIBIT_THRESHOLD = 0.7。state_translator 的自控判断逻辑是：
+  if I_inhibit > 0.7 → "你在努力克制，不想让情绪跑出来"
+  else → "你没怎么克制"
+
+推演三场景：
+- 被骂 I_inhibit=1.0 > 0.7 → "克制"档
+- 被夸 I_inhibit=0.365 < 0.7 → "不克制"档
+- 被质疑 I_inhibit=0.622 < 0.7 → "不克制"档
+
+结论：改成看 I_inhibit 后，能区分"被骂"（克制）与"被夸/被质疑"（不克制），但被夸和被质疑都落到"不克制"档，仍无法三场景全区分。
+
+问题 5：除 E_final[0] 和 I_inhibit 外，还有没有第三个信号可以辅助区分？列出你观察到的，没有就写"无"。
+
+有，多个可辅助区分的信号：
+
+(a) S_E（情绪饱和度）：三场景 0.775 / 0.422 / 0.507，三场景两两不同，区分度好。
+(b) D_error（偏差）：三场景 0.475 / 0.122 / 0.207，三场景两两不同，区分度好。
+(c) neg_intensity[0]（负向强度第 0 维）：0.516 / 0.281 / 0.338，三场景两两不同。
+(d) w_PFC_new（意志力）：0.100 / 0.037 / 0.062，三场景两两不同。
+(e) event_severity（事件严重度）：1.0 / 0.4 / 0.4，能区分被骂 vs 其他，但被夸与被质疑相同。
+
+其中 (a) S_E 和 (b) D_error 区分度最好，且是 I_inhibit 的上游信号（I_inhibit = w_i*D_error + KAPPA*w_PFC + b_i），已隐含 I_inhibit 的信息但梯度更细。若 T26 要重新设计感受判定，S_E 或 D_error 配合 I_inhibit 可三场景全区分。
+
+
+停止，等待裁决。

@@ -21,11 +21,13 @@
 
 import base64
 import json
+import math
 import os
 import time
 
 import numpy as np
 
+import config
 from schemas import EventNode, MemoryPackage
 from state import reset_state
 
@@ -128,6 +130,8 @@ def _event_to_dict(e):
         "unfinished": float(getattr(e, "unfinished", 0.0)),
         "persons": list(getattr(e, "persons", set()) or []),
         "tasks": list(getattr(e, "tasks", set()) or []),
+        # [056] 稳定实体 ID 列表；旧存档缺字段 → 空列表
+        "entity_ids": list(getattr(e, "entity_ids", []) or []),
         "danger_score": float(getattr(e, "danger_score", 0.0)),
         "event_severity": float(getattr(e, "event_severity", 0.0)),
     }
@@ -146,9 +150,78 @@ def _dict_to_event(d):
         unfinished=float(d.get("unfinished", 0.0)),
         persons=set(d.get("persons", []) or []),
         tasks=set(d.get("tasks", []) or []),
+        entity_ids=list(d.get("entity_ids", []) or []),
         danger_score=float(d.get("danger_score", 0.0)),
         event_severity=float(d.get("event_severity", 0.0)),
     )
+
+
+def _dump_relationships(rel):
+    """[056] 关系账本白名单化：只保留 {entity_id: {trust,intimacy,interactions,broken}}。
+
+    旧存档无此字段 → None（load 时按 reset_state 默认账本处理）。
+    单条记录字段缺失/损坏 → 跳过该条，不让一个坏实体拖垮整个会话。
+    """
+    if not isinstance(rel, dict):
+        return None
+    out = {}
+    for eid, v in rel.items():
+        if not isinstance(eid, str) or not isinstance(v, dict):
+            continue
+        try:
+            out[eid] = {
+                "trust": float(v.get("trust", 0.5)),
+                "intimacy": float(v.get("intimacy", 0.5)),
+                "interactions": int(v.get("interactions", 0)),
+                "broken": bool(v.get("broken", False)),
+            }
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def _load_relationships(data, st):
+    """[056] 恢复关系账本：与 reset_state 默认账本深合并（缺字段补默认）。
+
+    深合并而非整体替换：defaults 里的 user_001/ai_self 保证旧存档载入后
+    账本结构完整；存档里多出来的实体（boss_01 等）原样并入。
+    broken 不直接信任存档值——load 时按 trust 重算（见下），防旧版本
+    写入的 broken 与 trust 不自洽；[058 任务2] 起重算改为施密特触发器
+    口径：迟滞带 [BREAK, RELEASE) 内保持存档值（与 update_relationship
+    同逻辑，带内不翻转）。
+    """
+    defaults = st.get("relationships") or {}
+    merged = {eid: dict(v) for eid, v in defaults.items()}
+    for eid, v in (data.get("relationships") or {}).items():
+        if not isinstance(eid, str) or not isinstance(v, dict):
+            continue
+        cur = dict(merged.get(eid) or {"trust": 0.5, "intimacy": 0.5,
+                                       "interactions": 0, "broken": False})
+        try:
+            cur["trust"] = float(v.get("trust", cur["trust"]))
+            cur["intimacy"] = float(v.get("intimacy", cur["intimacy"]))
+            cur["interactions"] = int(v.get("interactions", cur["interactions"]))
+        except (TypeError, ValueError):
+            continue
+        cur["trust"] = min(1.0, max(0.0, cur["trust"]))
+        cur["intimacy"] = min(1.0, max(0.0, cur["intimacy"]))
+        cur["interactions"] = max(0, cur["interactions"])
+        # [058 任务2] broken 按施密特触发器重算（非布尔存档值一律按
+        #   False 处理，防 "false" 字符串被 bool() 吃成 True）：
+        #   trust<BREAK → True；trust>=RELEASE → False；
+        #   迟滞带 [BREAK, RELEASE) 内保持存档值——与轮末
+        #   update_relationship 同口径，band 内 load 不会翻转状态。
+        _saved_broken = v.get("broken", False)
+        _saved_broken = (_saved_broken if isinstance(_saved_broken, bool)
+                         else False)
+        if cur["trust"] < config.REL_TRUST_BREAK:
+            cur["broken"] = True
+        elif cur["trust"] >= config.REL_TRUST_RELEASE:
+            cur["broken"] = False
+        else:
+            cur["broken"] = _saved_broken
+        merged[eid] = cur
+    st["relationships"] = merged
 
 
 def dump_state(st):
@@ -186,6 +259,8 @@ def dump_state(st):
         # [050 A1] 上一轮真实计算的面板数值；旧文件无此字段 → null，
         #   /state 据此区分「未计算」与「计算结果为 0」。
         "last_metrics": _dump_metrics(st.get("last_metrics")),
+        # [056 任务1] 会话级关系账本；旧文件无此字段 → null
+        "relationships": _dump_relationships(st.get("relationships")),
     }
 
 
@@ -231,6 +306,49 @@ def _dump_metrics(m):
     return out
 
 
+def apply_gap_decay(st, gap_days):
+    """[055 任务3 / 058 任务1] 跨天衰减四条通道（load 与常驻进程共用）。
+
+    通道（常数见 config TAU_GAP_DAYS_*，全部 [未校准]）：
+      E_prev                 ×= exp(-gap / TAU_GAP_DAYS_EMOTION)   tau=1 天
+      w_PFC                  ×= exp(-gap / TAU_GAP_DAYS_FATIGUE)   tau=2 天
+      HabituationSignal_prev ×= exp(-gap / TAU_GAP_DAYS_HABIT)     tau=3 天
+      session_gap_days       += gap（包级召回折扣的全局乘数；同一会话内
+                             多次空档累加——记忆只会比轮龄显示的更旧）
+
+    gap_days <= 0 时任何值都不衰减（exp(0)=1 的短路，逐位不动）。
+    返回结算明细 dict（before/after，供 log 与探针观测）。
+    语义边界：只消退"没有轮次发生的时间"，不碰任何当轮计算；
+    何时调用由调用方决定（load 时一次 / 常驻轮初超阈值时一次）。
+    """
+    gap = max(0.0, float(gap_days or 0.0))
+    e_before = np.asarray(st.get("E_prev"), dtype=float).copy()
+    w_before = float(st.get("w_PFC", 0.0))
+    h_before = float(st.get("HabituationSignal_prev", 0.0))
+    if gap > 0.0:
+        _e_tau = float(getattr(config, "TAU_GAP_DAYS_EMOTION", 0.0) or 0.0)
+        if _e_tau > 0.0:
+            st["E_prev"] = e_before * math.exp(-gap / _e_tau)
+        _f_tau = float(getattr(config, "TAU_GAP_DAYS_FATIGUE", 0.0) or 0.0)
+        if _f_tau > 0.0:
+            st["w_PFC"] = w_before * math.exp(-gap / _f_tau)
+        _h_tau = float(getattr(config, "TAU_GAP_DAYS_HABIT", 0.0) or 0.0)
+        if _h_tau > 0.0:
+            st["HabituationSignal_prev"] = h_before * math.exp(-gap / _h_tau)
+    st["session_gap_days"] = (float(st.get("session_gap_days", 0.0) or 0.0)
+                              + gap)
+    return {
+        "gap_days": float(gap),
+        "E_prev_before": [float(x) for x in e_before],
+        "E_prev_after": [float(x) for x in np.asarray(st["E_prev"], dtype=float)],
+        "w_PFC_before": w_before,
+        "w_PFC_after": float(st.get("w_PFC", 0.0)),
+        "H_prev_before": h_before,
+        "H_prev_after": float(st.get("HabituationSignal_prev", 0.0)),
+        "session_gap_days_after": float(st.get("session_gap_days", 0.0)),
+    }
+
+
 def load_state(data, warn=print):
     """从 dump_state 的结果恢复 st（缺字段/损坏按默认降级）。"""
     st = reset_state(seed=42)
@@ -249,10 +367,35 @@ def load_state(data, warn=print):
         st["messages"] = dump_messages(data.get("messages"))
         # [050 A1] 旧会话无 last_metrics → None（/state 返回 null 而非 0.0）
         st["last_metrics"] = _dump_metrics(data.get("last_metrics"))
+        # [056 任务1] 旧会话无 relationships → 保持 reset_state 默认账本
+        _load_relationships(data, st)
         for key in ("E_prev", "B", "M_prev"):
             vec = _b64_to_vec(data.get(key))
             if vec is not None:
                 st[key] = vec
+
+        # [055 任务3] 跨天时间感：用 saved_at 算空档，让"没有轮次发生"的时间
+        #   也产生作用。这是「隔 3 天」与「隔 30 轮」的本质区别——
+        #   30 轮里有轮次推进（E 每轮 ×0.85、w_PFC 每轮累积），
+        #   3 天里一轮都没有，靠的是这里的空档回落。
+        #   三项各自独立衰减，常数见 config 的 TAU_GAP_DAYS_*。
+        #   注意：只在这里做一次（每次 load 从 saved_at 重算），不会重复衰减。
+        #   [058 任务1] 衰减逻辑提纯为 apply_gap_decay——常驻进程（LRU 命中
+        #   不走 load）由 pipeline 轮初按 last_active 复用同一函数，两条路径
+        #   四条通道逐位同口径。
+        saved_at = data.get("saved_at")
+        gap_days = 0.0
+        if saved_at is not None:
+            try:
+                gap_days = max(0.0, (time.time() - float(saved_at)) / 86400.0)
+            except (TypeError, ValueError):
+                gap_days = 0.0
+        apply_gap_decay(st, gap_days)
+        # [058 任务1] 常驻空档基准对齐到加载时刻：saved_at 那段空档已在
+        #   上面结算，此后由 pipeline 每轮结束推进 last_active，轮初按
+        #   now - last_active 超阈值再结算——防常驻进程重复结算同一段。
+        #   不落盘：落盘值会与 saved_at 构成双重结算（重启路径以 saved_at 为准）。
+        st["last_active"] = time.time()
 
         # buffer（未归档轮记录）
         for rec in (data.get("buffer") or []):

@@ -88,12 +88,19 @@ def test_implant_dry_run_does_not_write(tmp_path):
 
 
 def test_implanted_memory_is_recalled(tmp_path):
-    """T047-4：说一句无关紧要的话，植入的“被骂”记忆能被检索到。
+    """T047-4：植入的"被骂"记忆在**相关**输入下能被检索到。
 
     走与线上一致的 memory_gateway → pipeline._recall_match 路径；
     单包只有植入项，因此命中即证明检索可见。now_valence 取 0.0（中性），
     极性过滤不介入，避免把包级软惩罚混入本用例的判断。
+
+    [053] 规格修正：原用例用一句完全无关的话（"今天天气不错"）断言必须召回，
+    等于把 TAU_FLOOR=0.15 这个假参数当成了规格——实测该句与植入故事余弦
+    只有 0.256，任何真实的"低相关不召回"拦截都不该放过它。现拆成两条：
+      相关输入 → 必须召回（余弦 0.812 / 0.706，远高于 TAU_FLOOR）；
+      无关输入 → 必须不召回（余弦 0.256，低于 TAU_FLOOR=0.45）。
     """
+    import config
     import session_store
     from embedder import get_embedder
     from memory_gateway import recall as memory_recall
@@ -103,21 +110,31 @@ def test_implanted_memory_is_recalled(tmp_path):
     st, _meta = session_store.load("t047_recall", str(tmp_path))
     assert st is not None
 
-    query = "今天天气不错，随便聊聊吧。"
     emb = get_embedder("bge")
-    q_vec = np.asarray(emb.encode(query), dtype=np.float32)
-    cur_event = EventNode(
-        event_id="cur-1", timestamp=time.time(), raw_text=query,
-        event_embedding=q_vec,
-    )
 
-    out = memory_recall(query, cur_event, st["memory_graph"],
-                        np.zeros(8), 0.0, time.time(), st,
-                        int(st.get("round_counter", 0)), now_valence=0.0)
+    def _recall(query):
+        q_vec = np.asarray(emb.encode(query), dtype=np.float32)
+        cur_event = EventNode(
+            event_id="cur-1", timestamp=time.time(), raw_text=query,
+            event_embedding=q_vec,
+        )
+        return memory_recall(query, cur_event, st["memory_graph"],
+                             np.zeros(8), 0.0, time.time(), st,
+                             int(st.get("round_counter", 0)), now_valence=0.0)
 
-    assert out.recalled is not None, "植入记忆未被召回"
+    # ---- 相关输入：必须召回，且极性与强度沿用植入值 ----
+    out = _recall("你上次写错代码被我骂的时候，是不是很委屈？")
+    assert out.recalled is not None, "相关输入未召回植入记忆"
     assert out.recalled.get("matched_pkg_seq") == res["seq"]
     assert out.recalled.get("recall_source") == "package_level"
     assert out.recalled.get("emotion_polarity") == "negative"
     assert abs(float(out.recalled.get("emotion_value")) - 0.85) < 1e-6
-    assert float(out.recalled.get("matched_sim")) > 0.15   # 高于 TAU_FLOOR
+    assert float(out.recalled.get("matched_sim")) > config.TAU_FLOOR
+
+    # ---- 无关输入：必须不召回（053 起 TAU_FLOOR 真正闭合）----
+    out2 = _recall("今天天气不错，随便聊聊吧。")
+    assert out2.recalled is None, (
+        "无关输入召回了植入记忆（matched_sim=%.3f，TAU_FLOOR=%.2f）——"
+        "说明低相关拦截没有生效"
+        % (float((out2.recalled or {}).get("matched_sim", -1.0)),
+           float(config.TAU_FLOOR)))

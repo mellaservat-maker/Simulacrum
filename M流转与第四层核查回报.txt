@@ -1,0 +1,233 @@
+只读核查回报 · M 流转 + 第四层
+日期：2026-10-06
+状态：等待裁决
+
+
+1. 任务 1：slow_path.py 完整原文
+
+# ============================================================
+# slow_path.py · V4.2 · 模块5 慢通路
+# 规格：5.5.8
+# ============================================================
+
+import numpy as np
+
+from config import w_s, u_s, W_v, U_v, v_s, v_v, b_v, b_s, ETA, W_H
+
+
+def sigmoid(z):
+    return 1.0 / (1.0 + np.exp(-z))
+
+
+def run_slow_path(x, ReframedContext, M, B, w_PFC, HabituationSignal):
+    z_s = (
+        w_s @ (x + ReframedContext)
+        + u_s @ M
+        + v_s @ B
+        + ETA * w_PFC
+        + W_H * HabituationSignal
+        + b_s
+    )
+    D_slow = float(sigmoid(z_s))
+
+    z_v = W_v @ (x + ReframedContext) + U_v @ M + v_v * D_slow + b_v
+    V = sigmoid(z_v)
+    return D_slow, V
+
+
+2. 任务 2：pipeline.py 中从 hippocampal_evaluate 到 run_slow_path 结束的完整段落
+（前后各 5 行上下文）
+
+    # 心光预算（用回合开始的 B）
+    B = st["B"]
+    B_xg = update_xinguang_budget(B[0], B[1])
+
+    # 海马体评估
+    hippo = hippocampal_evaluate(event, st["memory_graph"], x, B_xg, now)
+    M = hippo["M"]
+    ReframedContext = hippo["ReframedContext"]
+    HabituationSignal = hippo["HabituationSignal"]
+    HistoricalResidual = hippo["HistoricalResidual"]
+    M_text = hippo["M_text"]
+
+    # 快通路（可能更新 B[1]）
+    D_fast, B = run_fast_path(x_fast, B)
+
+    # 慢通路（用更新后的 B）
+    D_slow, V = run_slow_path(x, ReframedContext, M, B, st["w_PFC"], HabituationSignal)
+
+    # 情绪释放器
+    raw_emotion_impact, released_impact, release_rate = run_releaser(V, D_fast, HabituationSignal)
+
+    # 情绪加点
+    E_raw = run_emotion(st["E_prev"], released_impact, B)
+
+    # 拦截层
+
+
+3. 任务 3：全项目搜索 M 的流转路径
+
+3.1 变量名 M（独立变量）
+
+d:\aiqg\emotion_agent\config.py:111:# [M1 已知限制] L4  M 是 TopK 均值
+d:\aiqg\emotion_agent\config.py:134:# T4  M 生成方式评估（L4）
+d:\aiqg\emotion_agent\hippocampal_evaluator.py:4:# 输出字段名严格为 M（禁止 CurrentThought_Projected）
+d:\aiqg\emotion_agent\hippocampal_evaluator.py:25:            "M": np.zeros(m),
+d:\aiqg\emotion_agent\hippocampal_evaluator.py:49:    M = np.mean([mem.event_embedding for mem in topk], axis=0)
+d:\aiqg\emotion_agent\hippocampal_evaluator.py:50:    M = M / (np.linalg.norm(M) + 1e-8)
+d:\aiqg\emotion_agent\hippocampal_evaluator.py:58:        "M": M,
+d:\aiqg\emotion_agent\pipeline.py:78:    M = hippo["M"]
+d:\aiqg\emotion_agent\pipeline.py:88:    D_slow, V = run_slow_path(x, ReframedContext, M, B, st["w_PFC"], HabituationSignal)
+d:\aiqg\emotion_agent\schemas.py:32:    M: Any
+d:\aiqg\emotion_agent\slow_path.py:15:def run_slow_path(x, ReframedContext, M, B, w_PFC, HabituationSignal):
+d:\aiqg\emotion_agent\slow_path.py:18:        + u_s @ M
+d:\aiqg\emotion_agent\slow_path.py:26:    z_v = W_v @ (x + ReframedContext) + U_v @ M + v_v * D_slow + b_v
+d:\aiqg\emotion_agent\scripts\probe_numeric.py:119:    M = np.zeros(8)
+d:\aiqg\emotion_agent\scripts\probe_numeric.py:132:        + u_s @ M
+d:\aiqg\emotion_agent\scripts\probe_numeric.py:140:    z_v = W_v @ (x + ReframedContext) + U_v @ M + v_v * D_slow + b_v
+d:\aiqg\emotion_agent\scripts\probe_recall_with_history.py:101:    # x 是当前事件的快通路特征向量（M=8 维），用于 ReframedContext = tanh(x)
+d:\aiqg\emotion_agent\scripts\probe_recall_with_history.py:132:    print(f"M                   = {result['M']}")
+d:\aiqg\emotion_agent\scripts\probe_recall_with_history.py:177:    M_arr = np.asarray(result['M'], dtype=float)
+d:\aiqg\emotion_agent\scripts\probe_recall_with_history.py:179:        print(f"TODO_REVIEW: M 含非有限值 = {M_arr}")
+d:\aiqg\emotion_agent\scripts\verify_scenarios.py:70:    M = np.zeros(m)
+d:\aiqg\emotion_agent\scripts\verify_scenarios.py:76:    D_slow, V = run_slow_path(x, ReframedContext, M, B, st["w_PFC"], HabituationSignal)
+d:\aiqg\emotion_agent\tests\test_schemas.py:11:    assert "M" in HippocampalOutput.__annotations__
+
+3.2 字符串 "M"（字典键）
+
+d:\aiqg\emotion_agent\hippocampal_evaluator.py:25:            "M": np.zeros(m),
+d:\aiqg\emotion_agent\hippocampal_evaluator.py:58:        "M": M,
+d:\aiqg\emotion_agent\pipeline.py:78:    M = hippo["M"]
+d:\aiqg\emotion_agent\tests\test_schemas.py:11:    assert "M" in HippocampalOutput.__annotations__
+
+3.3 M_text
+
+d:\aiqg\emotion_agent\config.py:137:# T7  M_text 接入 LLM 摘要（5.5.6）
+d:\aiqg\emotion_agent\hippocampal_evaluator.py:26:            "M_text": "(无历史记忆)",
+d:\aiqg\emotion_agent\hippocampal_evaluator.py:51:    M_text = "；".join([f"记得{mem.event_id}（竞争分{s:.2f}）" for s, mem in topk_pairs])
+d:\aiqg\emotion_agent\hippocampal_evaluator.py:59:        "M_text": M_text,
+d:\aiqg\emotion_agent\logger.py:16:    "M_text", "action", "feature_mode",
+d:\aiqg\emotion_agent\pipeline.py:82:    M_text = hippo["M_text"]
+d:\aiqg\emotion_agent\pipeline.py:103:    monologue = state_to_prompt(E_final, I_inhibit, M_text, HistoricalResidual, HabituationSignal)
+d:\aiqg\emotion_agent\pipeline.py:135:        "M_text": M_text,
+d:\aiqg\emotion_agent\schemas.py:33:    M_text: str
+d:\aiqg\emotion_agent\schemas.py:58:    M_text: str
+d:\aiqg\emotion_agent\scripts\probe_heuristic_change.py:127:    print(f"M_text = {result['M_text']}")
+d:\aiqg\emotion_agent\state_translator.py:14:def state_to_prompt(E_final, I_inhibit, M_text, HistoricalResidual, HabituationSignal):
+d:\aiqg\emotion_agent\state_translator.py:39:你脑子里一直在想的事是：{M_text}。
+d:\aiqg\emotion_agent\scripts\probe_recall_with_history.py:133:    print(f"M_text              = {result['M_text']}")
+d:\aiqg\emotion_agent\scripts\probe_recall_with_history.py:139:    if result['M_text'] == "(无历史记忆)":
+d:\aiqg\emotion_agent\scripts\probe_recall_with_history.py:141:        print("未进入候选分支：evaluate 返回了空历史分支结果（M_text='(无历史记忆)'）。")
+d:\aiqg\emotion_agent\scripts\probe_recall_with_history.py:162:            print(f"召回正确：首位召回 A（与当前事件最相关），M_text='{result['M_text']}'")
+d:\aiqg\emotion_agent\scripts\probe_recall_with_history.py:165:            print(f"  M_text='{result['M_text']}'")
+d:\aiqg\emotion_agent\scripts\probe_v43_realstate.py:115:    print(f"M_text = {result['M_text']}")
+
+3.4 ReframedContext
+
+d:\aiqg\emotion_agent\config.py:119:# [M1 已知限制] L12 ReframedContext = tanh(x) 非零
+d:\aiqg\emotion_agent\hippocampal_evaluator.py:24:            "ReframedContext": np.tanh(x),
+d:\aiqg\emotion_agent\hippocampal_evaluator.py:52:    ReframedContext = np.tanh(x + HistoricalResidual + HabituationSignal)
+d:\aiqg\emotion_agent\hippocampal_evaluator.py:57:        "ReframedContext": ReframedContext,
+d:\aiqg\emotion_agent\pipeline.py:79:    ReframedContext = hippo["ReframedContext"]
+d:\aiqg\emotion_agent\pipeline.py:88:    D_slow, V = run_slow_path(x, ReframedContext, M, B, st["w_PFC"], HabituationSignal)
+d:\aiqg\emotion_agent\schemas.py:31:    ReframedContext: Any
+d:\aiqg\emotion_agent\slow_path.py:15:def run_slow_path(x, ReframedContext, M, B, w_PFC, HabituationSignal):
+d:\aiqg\emotion_agent\slow_path.py:17:        w_s @ (x + ReframedContext)
+d:\aiqg\emotion_agent\slow_path.py:26:    z_v = W_v @ (x + ReframedContext) + U_v @ M + v_v * D_slow + b_v
+d:\aiqg\emotion_agent\scripts\probe_numeric.py:120:    ReframedContext = np.tanh(x)
+d:\aiqg\emotion_agent\scripts\probe_numeric.py:131:        w_s @ (x + ReframedContext)
+d:\aiqg\emotion_agent\scripts\probe_numeric.py:140:    z_v = W_v @ (x + ReframedContext) + U_v @ M + v_v * D_slow + b_v
+d:\aiqg\emotion_agent\scripts\probe_recall_with_history.py:101:    # x 是当前事件的快通路特征向量（M=8 维），用于 ReframedContext = tanh(x)
+d:\aiqg\emotion_agent\scripts\probe_recall_with_history.py:131:    print(f"ReframedContext     = {result['ReframedContext']}")
+d:\aiqg\emotion_agent\scripts\verify_scenarios.py:71:    ReframedContext = np.tanh(x)
+d:\aiqg\emotion_agent\scripts\verify_scenarios.py:76:    D_slow, V = run_slow_path(x, ReframedContext, M, B, st["w_PFC"], HabituationSignal)
+
+
+一段话总结 M 的流转：
+M 在 hippocampal_evaluator 里产生（TopK 候选 event_embedding 的归一化均值），
+通过 HippocampalOutput 字典的 "M" 键返回给 pipeline.py；pipeline.py 取出后传给 slow_path.run_slow_path，
+slow_path 用 M 做两件事——D_slow 计算里 u_s @ M（慢速危险度的记忆贡献项）、
+V 计算里 U_v @ M（奖励/惩罚评估的记忆贡献项），也就是说 D_slow 和 V 共用同一个 M，
+只在海马体里算一次，两处都用。M 没有传到其他模块（拦截层/策略层/情绪模块都不用 M）。
+M_text 则从海马体经 pipeline 传到 state_translator 做提示词拼接，最终进 LLM。
+
+
+4. 任务 4：确认"复用"是否成立
+
+4.1 slow_path.run_slow_path 是否接收 M 作为参数？贴出函数签名原文。
+
+是。函数签名（slow_path.py 第 15 行）：
+
+def run_slow_path(x, ReframedContext, M, B, w_PFC, HabituationSignal):
+
+
+4.2 slow_path 内部用 M 做了什么？贴出用到 M 的那几行。
+
+用了两处，都在 slow_path.py 里：
+
+第 18 行（z_s 的一部分，用于 D_slow 慢速危险判断）：
+        + u_s @ M
+
+第 26 行（z_v 的一部分，用于 V 奖励/惩罚评估）：
+    z_v = W_v @ (x + ReframedContext) + U_v @ M + v_v * D_slow + b_v
+
+
+4.3 奖励/惩罚评估（V）在哪算？是 slow_path 内部算的，还是别处算的？
+
+slow_path 内部算的。slow_path.py 第 26~27 行：
+
+    z_v = W_v @ (x + ReframedContext) + U_v @ M + v_v * D_slow + b_v
+    V = sigmoid(z_v)
+
+然后作为返回值的第二个元素返回给 pipeline（第 28 行 return D_slow, V）。
+pipeline 里 V 只在第 91 行传给 emotion_releaser：
+    raw_emotion_impact, released_impact, release_rate = run_releaser(V, D_fast, HabituationSignal)
+没有别的地方再算 V。
+
+
+4.4 V 的计算有没有用到 M？用到了 / 没用，给证据。
+
+用到了。证据是 slow_path.py 第 26 行：
+
+    z_v = W_v @ (x + ReframedContext) + U_v @ M + v_v * D_slow + b_v
+
+其中 U_v @ M 就是 M 对 V（奖励/惩罚评估）的贡献项。
+而且因为 D_slow 和 V 在同一个 run_slow_path 函数里、用的是同一个 M 参数，
+所以确实是"只调一次 M，两处共用"，复用成立。
+
+
+5. 任务 5：确认第四层是否存在
+
+5.1 关键词搜索结果
+
+一致性：
+d:\aiqg\emotion_agent\scripts\probe_numeric.py:185:    # 【方案A裁决】一致性检查：与 config.py 的 w_s 必须完全一致
+d:\aiqg\emotion_agent\state_translator.py:41:请基于以上设定，回应用户。用第一人称表达内在的冲突、习惯和克制。"""
+d:\aiqg\emotion_agent\scripts\probe_xinguang_budget.py:154:            # 一致性强校验
+d:\aiqg\emotion_agent\scripts\probe_xinguang_budget.py:157:                print(f"TODO_REVIEW: 一致性失败 {mem.event_id} "
+d:\aiqg\emotion_agent\scripts\verify_scenarios.py:28:# 【方案A裁决】一致性检查：config 与 probe 的 w_s 必须完全一致
+
+冲突：
+d:\aiqg\emotion_agent\state_translator.py:41:请基于以上设定，回应用户。用第一人称表达内在的冲突、习惯和克制。"""
+
+consistency：零命中（代码里写的是中文"一致性"）
+
+conflict：零命中
+
+monitor：零命中
+
+中间判断：零命中
+
+arbitration：零命中
+
+协调：零命中
+
+
+5.2 一句话结论
+
+当前代码里，没有任何模块在做"本能反应与综合评估之间的冲突检测"——
+相关关键词除了 prompt 文案里的"冲突"二字和探针脚本里的"一致性检查"外，
+没有任何模块实现了冲突监测/中间判断/协调仲裁的逻辑。
+
+
+停止，等待裁决。

@@ -1,0 +1,125 @@
+V4.3 快照与 nodes 字典现状回报
+日期：2026-10-06
+状态：等待裁决
+
+
+1. 快照目录路径与文件总数
+
+路径：d:\aiqg\emotion_agent_snapshot_v43\
+文件总数：45
+
+排除项：logs、scripts、__pycache__、.pytest_cache
+M1 快照 _snapshot_m1_pass 未动。
+
+
+2. 任务 2 的六个逐条回答
+
+问题 1：event_parser.parse 产出的 EventNode 中，nodes 字典的完整结构是什么？给出一个真实示例。
+
+完整结构（5 个固定键，值都是列表）：
+
+    nodes = {
+        "person":   [字符串列表],
+        "task":     [字符串列表],
+        "topic":    [],
+        "state":    [],
+        "relation": [],
+    }
+
+真实示例（输入"用户骂了AI"）：
+
+    nodes = {
+        "person":   ["你", "我", "他", "她", "它", "大家", "老板", "用户", "AI", "老师"]  → 实际命中 ["用户", "AI"]
+        "task":     ["方案", "代码", "问题", "任务", "答案", "回复", "报告", "文档", "项目"]  → 实际命中 []
+        "topic":    [],
+        "state":    [],
+        "relation": [],
+    }
+
+（注：_extract_persons 是遍历 _PERSON_HINTS 元组里的 10 个词，哪个在 raw_text 里就返回哪个。
+ "用户骂了AI" 里命中"用户"和"AI"，所以 person = ["用户", "AI"]；task 列表里的 9 个词都不在，
+ 所以 task = []。topic / state / relation 永远是空列表。）
+
+
+问题 2：nodes 字典里的键（key）都有哪些类型？
+
+共 5 个固定键：
+  - person
+  - task
+  - topic
+  - state
+  - relation
+
+其中只有 person 和 task 有实际提取逻辑；topic / state / relation 永远是空列表。
+
+
+问题 3：nodes 字典里的值（value）是什么结构？举 2~3 个具体例子。
+
+值都是字符串列表（list of str）。
+
+例子 1：输入"用户骂了AI"
+  person = ["用户", "AI"]
+  task = []
+  topic = []
+  state = []
+  relation = []
+
+例子 2：输入"你把方案给老板"
+  person = ["你", "老板"]
+  task = ["方案"]
+  topic = []
+  state = []
+  relation = []
+
+例子 3：输入"今天天气好"（命中零个）
+  person = []
+  task = []
+  topic = []
+  state = []
+  relation = []
+
+
+问题 4：全项目中，有哪些文件读取了 nodes 字典？列出文件路径与行号。
+
+共 1 个文件、3 处：
+
+  d:\aiqg\emotion_agent\feature_encoder.py 第 39 行
+    cur_persons = set(current_event.nodes.get("person", []))
+
+  d:\aiqg\emotion_agent\feature_encoder.py 第 44 行
+    mem_persons |= set(mem.nodes.get("person", []))
+
+  d:\aiqg\emotion_agent\feature_encoder.py 第 51 行
+    return 1.0 if current_event.nodes.get("task") else 0.0
+
+（注：第 39 行和第 44 行属于同一函数 compute_person_match 内部，用于算人物匹配余弦相似度；
+ 第 51 行是 compute_task_relevance，算 x[2] 任务相关性。）
+
+
+问题 5：全项目中，有哪些文件真正使用了 nodes 里的内容做逻辑判断？
+
+feature_encoder.py。
+
+具体：compute_person_match 用 nodes["person"] 算 cosine 相似度（写入 x_fast[1]），
+compute_task_relevance 用 nodes["task"] 是否非空算二值（写入 x[2]）。
+这两个值都进入特征向量 x / x_fast，参与快通路慢通路计算。
+
+其余模块（hippocampal_evaluator / xinguang / memory_graph / pipeline / policy 等）
+均不读取 nodes 字典。
+
+
+问题 6：一句话回答：nodes 字典目前是在用，还是只是存着没人看？
+
+在用，feature_encoder.py 读了 person 和 task 两个键做特征计算，
+但 topic / state / relation 三个键存着没人看（永远空列表）。
+
+
+3. 一句话结论：T20 是"搬箱子"还是"造新车间"
+
+搬箱子：event_parser 已经在提取 person/task 并存进 nodes 了，
+T20 只是把 nodes["person"] 搬到 EventNode.persons（set 格式）、
+把 nodes["task"] 搬到 EventNode.tasks（set 格式），
+不需要新造提取逻辑，属于数据格式对齐，不是造新车间。
+
+
+停止，等待裁决。

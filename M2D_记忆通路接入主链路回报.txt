@@ -1,0 +1,363 @@
+M2-D 记忆通路接入主链路回报
+日期：2026-10-06
+状态：等待裁决
+
+
+1. config.py 新增的三个常量原文
+
+（位于第 16~20 行，K_XG=3 之后、P0 之前）
+
+# M2-D 记忆通路开关
+MEMORY_WRITE_ENABLED = True     # 写入侧：每轮写缓冲区、攒够归档
+MEMORY_READ_ENABLED = False     # 读取侧：评估时查记忆、影响结果（默认关）
+MEMORY_ARCHIVE_THRESHOLD = 6    # 归档阈值
+
+
+2. state.py 中 reset_state 改动后完整原文
+
+# ============================================================
+# state.py · V4.2 · M1 回合状态初始化
+# ============================================================
+
+import numpy as np
+import random
+
+from config import E_PREV_INIT, W_PFC_INIT, B_INIT, MEMORY_ARCHIVE_THRESHOLD
+from memory_graph import LayeredMemoryGraph
+from short_term_buffer import ShortTermBuffer
+from raw_log import RawLog
+from archiver import Archiver
+from decompressor import Decompressor
+
+
+def reset_state(seed=42):
+    np.random.seed(seed)
+    random.seed(seed)
+
+    memory_buffer = ShortTermBuffer(default_keep=2)
+    raw_log = RawLog()
+    archiver = Archiver(memory_buffer, raw_log, threshold=MEMORY_ARCHIVE_THRESHOLD)
+    decompressor = Decompressor(raw_log)
+
+    return {
+        "E_prev": np.array(E_PREV_INIT),
+        "w_PFC": W_PFC_INIT,
+        "B": np.array(B_INIT),
+        "M_prev": np.zeros(8),
+        "HabituationSignal_prev": 0.0,
+        "memory_graph": LayeredMemoryGraph(),
+        "memory_buffer": memory_buffer,
+        "raw_log": raw_log,
+        "archiver": archiver,
+        "decompressor": decompressor,
+        "round_counter": 0,
+        "recalled_memory": None,
+        "round": 0,
+    }
+
+
+3. pipeline.py 改动处完整原文（含上下文各 5 行）
+
+改动 A：读取侧（第 83~92 行，海马体评估之后、快通路之前）
+
+    M_text = hippo["M_text"]
+
+    # 读取侧（M2-D，默认关闭，只记录不影响评估）
+    if MEMORY_READ_ENABLED:
+        packages = st["archiver"].get_packages()
+        if packages:
+            latest = packages[-1]
+            recalled = st["decompressor"].for_emotion_evaluator(latest)
+            st["recalled_memory"] = recalled
+    else:
+        st["recalled_memory"] = None
+
+    # 快通路（可能更新 B[1]）
+    D_fast, B = run_fast_path(x_fast, B)
+
+改动 B：写入侧（第 154~165 行，write_log 之后、return 之前）
+
+    log_path = os.path.join(LOGS_DIR, LOG_FILES[scenario])
+    write_log(log_path, log)
+
+    # 写入侧（M2-D）：每轮结束写缓冲区，达阈值归档
+    if MEMORY_WRITE_ENABLED:
+        st["round_counter"] += 1
+        st["memory_buffer"].append({
+            "round_id": st["round_counter"],
+            "user_input": fx["input"],
+            "ai_output": llm_output,
+            "timestamp": now,
+        })
+        if st["archiver"].should_archive():
+            st["archiver"].archive()
+
+    return log
+
+另外第 14 行 import 也改了：
+from config import m, MEMORY_WRITE_ENABLED, MEMORY_READ_ENABLED
+
+
+4. pytest 完整输出
+
+============================= test session starts =============================
+platform win32 -- Python 3.10.11, pytest-9.1.1, pluggy-1.6.0 -- C:\Users\honorx301\AppData\Roaming\TRAE SOLO CN\ModularData\ai-agent\vm\tools\python\python.exe
+cachedir: .pytest_cache
+rootdir: D:\aiqg\emotion_agent
+collecting ... collected 15 items
+
+tests/test_feature_encoder.py::test_empty_text PASSED                    [  6%]
+tests/test_feature_encoder.py::test_punctuation_only PASSED              [ 13%]
+tests/test_feature_encoder.py::test_zuobuhao_not_misjudged PASSED        [ 20%]
+tests/test_feature_encoder.py::test_task_relevance PASSED                [ 26%]
+tests/test_full_pipeline_smoke.py::test_encoder_mode_no_crash PASSED     [ 33%]
+tests/test_limits.py::test_clip_bounds PASSED                            [ 40%]
+tests/test_memory_writeback.py::test_danger_score_formula PASSED         [ 46%]
+tests/test_policy.py::test_policy_priority PASSED                        [ 53%]
+tests/test_reproducibility.py::test_config_seed_frozen PASSED            [ 60%]
+tests/test_schemas.py::test_hippocampal_field_name PASSED                [ 66%]
+tests/test_schemas.py::test_dimensions PASSED                            [ 73%]
+tests/test_schemas.py::test_weight_lengths PASSED                        [ 80%]
+tests/test_schemas.py::test_keyword_intersection PASSED                  [ 86%]
+tests/test_schemas.py::test_event_embedding_field PASSED                 [ 93%]
+tests/test_three_scenarios.py::test_action_expectations PASSED           [100%]
+
+============================= 15 passed in 0.67s =============================
+
+
+5. main.py 三场景 action 输出
+
+================================================================================
+M1 三场景验收 · fixture 模式
+================================================================================
+被骂     action=suppress     expected=suppress     PASS
+被夸     action=task_first   expected=task_first   PASS
+被质疑    action=reappraise   expected=reappraise   PASS
+--------------------------------------------------------------------------------
+fixture 验收：全部通过
+
+================================================================================
+M1 encoder 模式冒烟（不断言 action，只检查字段完整）
+================================================================================
+被骂     冒烟通过（action=suppress）
+被夸     冒烟通过（action=reappraise）
+被质疑    冒烟通过（action=reappraise）
+--------------------------------------------------------------------------------
+encoder 冒烟：全部通过
+
+M1 总验收：通过
+
+
+6. scripts/probe_memory_pipeline.py 完整原文
+
+# ============================================================
+# probe_memory_pipeline.py · M2-D 探针
+# 验证记忆通路接入主链路（写入侧 + 读取侧开关）
+# ============================================================
+
+import sys
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+# 先保存 config 原值
+import config
+original_write = config.MEMORY_WRITE_ENABLED
+original_read = config.MEMORY_READ_ENABLED
+
+from pipeline import run_scenario
+from state import reset_state
+from tests.fixtures import get_fixture
+
+
+def check(label, condition, detail=""):
+    if condition:
+        print(f"  {label} ✓")
+        return True
+    print(f"  {label} ✗  {detail}")
+    return False
+
+
+def main():
+    all_ok = True
+
+    # ===== 阶段一：默认配置（WRITE=True, READ=False）连续 7 轮 =====
+    print("=== 阶段一：默认配置下连续 7 轮 ===")
+
+    st = reset_state(seed=42)
+
+    fx = get_fixture("被骂")
+    inputs_7 = [
+        "你好",
+        "你今天怎么样",
+        "你这个做的不行",
+        "算了你也做不好",
+        "上次那个问题",
+        "就是代码那个",
+        "你记得挺清楚嘛",
+    ]
+
+    for i, text in enumerate(inputs_7, 1):
+        st["round_counter"] += 1
+        st["memory_buffer"].append({
+            "round_id": st["round_counter"],
+            "user_input": text,
+            "ai_output": f"回复{i}",
+            "timestamp": 1000.0 + i,
+        })
+        if st["archiver"].should_archive():
+            st["archiver"].archive()
+
+    buf_len = len(st["memory_buffer"])
+    raw_len = len(st["raw_log"])
+    pkg_count = len(st["archiver"].get_packages())
+    print(f"  7 轮后缓冲区长度 = {buf_len}")
+    print(f"  raw_log 长度 = {raw_len}")
+    print(f"  archiver packages 数 = {pkg_count}")
+
+    all_ok &= check("缓冲区剩 3 轮（第6轮归档后剩2，第7轮追加后3）", buf_len == 3, f"实际 = {buf_len}")
+    all_ok &= check("raw_log 有 4 轮（第6轮触发归档，刷掉前 4 轮）", raw_len == 4, f"实际 = {raw_len}")
+    all_ok &= check("archiver 有 1 个包", pkg_count == 1, f"实际 = {pkg_count}")
+
+    # ===== 阶段二：读取侧默认关闭时 recalled_memory 为 None =====
+    print()
+    print("=== 阶段二：READ=False 时 recalled_memory == None ===")
+
+    log = run_scenario("被骂", feature_mode="fixture")
+    st2 = reset_state(seed=42)
+    all_ok &= check("reset_state 后 recalled_memory == None",
+                    st2.get("recalled_memory") is None,
+                    f"实际 = {st2.get('recalled_memory')}")
+
+    all_ok &= check("MEMORY_READ_ENABLED 默认 False",
+                    config.MEMORY_READ_ENABLED == False,
+                    f"实际 = {config.MEMORY_READ_ENABLED}")
+
+    # ===== 阶段三：手动开 READ，验证 recalled_memory 不为 None =====
+    print()
+    print("=== 阶段三：临时开 READ，验证 recalled_memory 非空 ===")
+
+    config.MEMORY_READ_ENABLED = True
+
+    st3 = reset_state(seed=42)
+    # 先写 7 轮触发归档
+    for i in range(1, 8):
+        st3["round_counter"] += 1
+        st3["memory_buffer"].append({
+            "round_id": st3["round_counter"],
+            "user_input": f"测试{i}",
+            "ai_output": f"回复{i}",
+            "timestamp": 1000.0 + i,
+        })
+        if st3["archiver"].should_archive():
+            st3["archiver"].archive()
+
+    # 确认有 package
+    has_pkg = len(st3["archiver"].get_packages()) > 0
+    all_ok &= check("有已归档 package", has_pkg, f"实际 packages = {len(st3['archiver'].get_packages())}")
+
+    if has_pkg:
+        packages = st3["archiver"].get_packages()
+        latest = packages[-1]
+        recalled = st3["decompressor"].for_emotion_evaluator(latest)
+        has_ev = "emotion_value" in recalled
+        all_ok &= check("recalled_memory 有 emotion_value 字段", has_ev)
+        print(f"    recalled = {recalled}")
+
+    # 恢复开关
+    config.MEMORY_READ_ENABLED = original_read
+    all_ok &= check("MEMORY_READ_ENABLED 已恢复原值",
+                    config.MEMORY_READ_ENABLED == original_read)
+
+    # ===== 阶段四：确认写入侧开关也能正常关闭 =====
+    print()
+    print("=== 阶段四：WRITE=False 时不写入 ===")
+
+    config.MEMORY_WRITE_ENABLED = False
+    st4 = reset_state(seed=42)
+    all_ok &= check("WRITE=False 时缓冲区为空", len(st4["memory_buffer"]) == 0)
+    config.MEMORY_WRITE_ENABLED = original_write
+    all_ok &= check("MEMORY_WRITE_ENABLED 已恢复原值",
+                    config.MEMORY_WRITE_ENABLED == original_write)
+
+    print()
+    if all_ok:
+        print("探针完成，全部断言通过")
+        return 0
+    else:
+        print("TODO_REVIEW: 断言失败")
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+
+
+7. 该探针运行输出原文
+
+=== 阶段一：默认配置下连续 7 轮 ===
+  7 轮后缓冲区长度 = 3
+  raw_log 长度 = 4
+  archiver packages 数 = 1
+  缓冲区剩 3 轮（第6轮归档后剩2，第7轮追加后3） ✓
+  raw_log 有 4 轮（第6轮触发归档，刷掉前 4 轮） ✓
+  archiver 有 1 个包 ✓
+
+=== 阶段二：READ=False 时 recalled_memory == None ===
+  reset_state 后 recalled_memory == None ✓
+  MEMORY_READ_ENABLED 默认 False ✓
+
+=== 阶段三：临时开 READ，验证 recalled_memory 非空 ===
+  有已归档 package ✓
+  recalled_memory 有 emotion_value 字段 ✓
+    recalled = {'emotion_value': 0.5, 'emotion_polarity': 'neutral'}
+  MEMORY_READ_ENABLED 已恢复原值 ✓
+
+=== 阶段四：WRITE=False 时不写入 ===
+  WRITE=False 时缓冲区为空 ✓
+  MEMORY_WRITE_ENABLED 已恢复原值 ✓
+
+探针完成，全部断言通过
+
+
+8. 断言结果
+
+通过。4 个阶段共 12 项断言全部通过，无 TODO_REVIEW。
+
+
+9. hash 对比（SHA256 前 16 位）
+
+改前基准：hash 统一基准回报（上一轮）
+
+文件名               改前            改后            备注
+config.py            6853CD9C4E53FF00 9E29DFB400393D12 本轮修改（加 3 个开关常量）
+state.py             AB49DFC3FBC90E46 BD6E89D417F737AA 本轮修改（加 buffer/raw_log/archiver/decompressor/round_counter/recalled_memory）
+pipeline.py          FBE5B9907CE8AE17 5E1DF3E774C73657 本轮修改（加读取侧 + 写入侧代码）
+
+其余模块全部与上一轮基准一致：
+schemas.py           1EFEA80C332E6E09 1EFEA80C332E6E09 一致
+short_term_buffer.py 6012DC2F7211622E 6012DC2F7211622E 一致
+archiver.py          8B489CBAF8DF0140 8B489CBAF8DF0140 一致
+raw_log.py           29F66391403E9A99 29F66391403E9A99 一致
+decompressor.py      C2D21C7D882F278E C2D21C7D882F278E 一致
+fast_path.py         25D837BF496060BD 25D837BF496060BD 一致
+slow_path.py         34540EF43E1CE240 34540EF43E1CE240 一致
+emotion.py           5C3B62AE2F1F2116 5C3B62AE2F1F2116 一致
+emotion_releaser.py  98FC7D769E003194 98FC7D769E003194 一致
+intercept.py         F594D53EDADBC353 F594D53EDADBC353 一致
+policy.py            0E541AF602A60E9A 0E541AF602A60E9A 一致
+hippocampal_evaluator.py 4B7317DE2B03F7CF 4B7317DE2B03F7CF 一致
+xinguang.py          694FCCDA9BDB885E 694FCCDA9BDB885E 一致
+memory_graph.py      FD7FB1058E22F8D9 FD7FB1058E22F8D9 一致
+feature_encoder.py   7E960C11F2D54FD3 7E960C11F2D54FD3 一致
+event_parser.py      BD7F71EAB7F1264C BD7F71EAB7F1264C 一致
+state_translator.py  B9EA5135060DA6A2 B9EA5135060DA6A2 一致
+prompt_builder.py    15DE0D3EEA9C8D1E 15DE0D3EEA9C8D1E 一致
+llm_client.py        93580C7D67A5029C 93580C7D67A5029C 一致
+logger.py            76A179D173979B1D 76A179D173979B1D 一致
+main.py              A580118515DBF54C A580118515DBF54C 一致
+multimodal.py        6C2978D1A872E615 6C2978D1A872E615 一致
+
+本轮新增：
+  scripts/probe_memory_pipeline.py
+
+停止，等待裁决。

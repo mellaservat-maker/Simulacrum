@@ -1,0 +1,373 @@
+接真 LLM（DeepSeek）回报
+日期：2026-10-06
+状态：等待裁决
+
+
+1. secrets_local.py.template 完整原文
+
+# 本地密钥模板
+# 复制本文件为 secrets_local.py，填入真实密钥
+# secrets_local.py 不进快照、不进版本库、不贴进对话
+
+DEEPSEEK_OFFICIAL_API_KEY = ""
+DEEPSEEK_OFFICIAL_BASE_URL = "https://api.deepseek.com"
+
+DEEPSEEK_THIRD_API_KEY = ""
+DEEPSEEK_THIRD_BASE_URL = ""
+
+DEEPSEEK_MODEL = "deepseek-chat"
+
+
+2. llm_client.py 完整原文
+
+# ============================================================
+# llm_client.py · 模块12 心流
+# 支持多后端：mock / deepseek_official / deepseek_third
+# 默认 mock，真实密钥由 secrets_local.py 提供
+# ============================================================
+
+import json
+import os
+import sys
+
+import config
+
+
+# ---- 密钥加载 ----
+
+def _load_secrets():
+    """尝试加载 secrets_local，失败返回 None。"""
+    try:
+        import secrets_local
+        return secrets_local
+    except ImportError:
+        print("[llm_client] 警告：未找到 secrets_local.py，降级为 MockLLM")
+        return None
+
+
+# ---- MockLLM ----
+
+class MockLLM:
+    def generate(self, prompt):
+        return f"[MOCK] 收到 prompt，长度 {len(prompt)}"
+
+
+# ---- DeepSeekLLM ----
+
+class DeepSeekLLM:
+    def __init__(self, api_key, base_url, model):
+        self.api_key = api_key
+        self.base_url = base_url.rstrip("/")
+        self.model = model
+
+    def generate(self, prompt):
+        url = f"{self.base_url}/chat/completions"
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.api_key}",
+        }
+        payload = {
+            "model": self.model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": config.LLM_TEMPERATURE,
+            "max_tokens": config.LLM_MAX_TOKENS,
+        }
+
+        # 优先用 requests，否则用 urllib
+        try:
+            import requests
+            resp = requests.post(url, headers=headers, json=payload, timeout=60)
+            resp.raise_for_status()
+            data = resp.json()
+            return data["choices"][0]["message"]["content"]
+        except ImportError:
+            # 标准库 urllib 兜底
+            import urllib.request
+            import urllib.error
+            data_bytes = json.dumps(payload).encode("utf-8")
+            req = urllib.request.Request(url, data=data_bytes, headers=headers, method="POST")
+            try:
+                with urllib.request.urlopen(req, timeout=60) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    return data["choices"][0]["message"]["content"]
+            except urllib.error.HTTPError as e:
+                raise RuntimeError(f"LLM 请求失败: {e.code} {e.reason}") from e
+
+
+# ---- 工厂函数 ----
+
+def get_llm():
+    backend = config.LLM_BACKEND
+
+    if backend == "mock":
+        return MockLLM()
+
+    if backend in ("deepseek_official", "deepseek_third"):
+        secrets = _load_secrets()
+        if secrets is None:
+            return MockLLM()
+
+        if backend == "deepseek_official":
+            api_key = getattr(secrets, "DEEPSEEK_OFFICIAL_API_KEY", "")
+            base_url = getattr(secrets, "DEEPSEEK_OFFICIAL_BASE_URL", "")
+        else:
+            api_key = getattr(secrets, "DEEPSEEK_THIRD_API_KEY", "")
+            base_url = getattr(secrets, "DEEPSEEK_THIRD_BASE_URL", "")
+
+        model = getattr(secrets, "DEEPSEEK_MODEL", "deepseek-chat")
+
+        if not api_key or not base_url:
+            print(f"[llm_client] 警告：{backend} 的密钥/URL 为空，降级为 MockLLM")
+            return MockLLM()
+
+        return DeepSeekLLM(api_key, base_url, model)
+
+    raise ValueError(f"未知 LLM_BACKEND: {backend}")
+
+
+3. config.py 新增常量原文
+
+（位于 MEMORY_ARCHIVE_THRESHOLD 之后、P0 之前，第 21~25 行）
+
+# LLM 配置
+LLM_BACKEND = "mock"          # "mock" / "deepseek_official" / "deepseek_third"
+LLM_TEMPERATURE = 0.7
+LLM_MAX_TOKENS = 512
+
+
+4. archiver.py 改动处完整原文
+
+改动 1：import 区新增（第 10~11 行）
+
+import config
+from llm_client import get_llm
+
+（原 from config import LLM_BACKEND 改为 import config）
+
+改动 2：organize_narrative 函数体（第 47 行起）
+
+    def organize_narrative(self, records: List[Dict[str, Any]]) -> MemoryPackage:
+        # 【桩】此处未来替换为 LLM 整理，当前为占位实现
+        seq = len(self._packages) + 1
+
+        if config.LLM_BACKEND == "mock":
+            # 桩逻辑：固定拼接
+            round_ids = [str(r.get("round_id", "")) for r in records]
+            raw_pointer = "-".join(round_ids)
+
+            # 关键词：取前 2 条记录 user_input 的前 4 个字
+            keywords = []
+            for r in records[:2]:
+                text = r.get("user_input", "")
+                if text:
+                    keywords.append(text[:4])
+            keywords = keywords[:3]
+
+            # 叙事字段：桩占位
+            first_user = records[0].get("user_input", "") if records else ""
+            last_user = records[-1].get("user_input", "") if records else ""
+            count = len(records)
+
+            narrative_cause = f"桩：起因是用户在第{round_ids[0]}轮说'{first_user}'"
+            narrative_trigger = f"桩：触发点是{count}轮对话积累"
+            narrative_consequence = f"桩：后果是到第{round_ids[-1]}轮用户说'{last_user}'"
+            narrative_evaluation = f"桩：我的评价是中性，共{count}轮"
+            narrative_emotion = "桩：我的情绪是 neutral（占位）"
+            narrative_thought = f"桩：我的想法是这{count}轮可以归纳为一段记忆"
+
+            return MemoryPackage(
+                seq=seq,
+                emotion_value=0.5,
+                emotion_polarity="neutral",
+                keywords=keywords,
+                raw_pointer=raw_pointer,
+                narrative_cause=narrative_cause,
+                narrative_trigger=narrative_trigger,
+                narrative_consequence=narrative_consequence,
+                narrative_evaluation=narrative_evaluation,
+                narrative_emotion=narrative_emotion,
+                narrative_thought=narrative_thought,
+            )
+        else:
+            # 真 LLM 路径：调用 LLM 生成 JSON，解析为 MemoryPackage
+            round_ids = [str(r.get("round_id", "")) for r in records]
+            raw_pointer = "-".join(round_ids)
+
+            # 构造对话原文
+            dialog_lines = []
+            for r in records:
+                user_text = r.get("user_input", "")
+                ai_text = r.get("ai_output", "")
+                dialog_lines.append(f"用户：{user_text}")
+                dialog_lines.append(f"AI：{ai_text}")
+            dialog_text = "\n".join(dialog_lines)
+
+            prompt = f"""请阅读以下对话片段，将其整理为一段记忆。
+严格只输出 JSON，不要有任何额外文字、解释或 Markdown 代码块。
+
+对话：
+{dialog_text}
+
+输出格式（严格遵循）：
+{{
+  "emotion_value": 0.0~1.0之间的浮点数,
+  "emotion_polarity": "positive" / "negative" / "neutral",
+  "keywords": ["关键词1", "关键词2", "关键词3"],
+  "narrative_cause": "起因（一句话）",
+  "narrative_trigger": "触发点（一句话）",
+  "narrative_consequence": "后果（一句话）",
+  "narrative_evaluation": "我的评价（一句话）",
+  "narrative_emotion": "我的情绪（一句话）",
+  "narrative_thought": "我的想法（一句话）"
+}}
+
+只输出 JSON 对象本身。"""
+
+            llm_output = get_llm().generate(prompt)
+
+            # 解析 JSON
+            import json
+            raw = llm_output.strip()
+            # 去掉可能的首尾 ```json ... ```
+            if raw.startswith("```"):
+                raw = raw.strip("`")
+                if raw.lower().startswith("json"):
+                    raw = raw[4:]
+                raw = raw.strip()
+
+            data = json.loads(raw)  # 解析失败时抛 ValueError，不吞异常
+
+            return MemoryPackage(
+                seq=seq,
+                emotion_value=float(data.get("emotion_value", 0.0)),
+                emotion_polarity=str(data.get("emotion_polarity", "neutral")),
+                keywords=list(data.get("keywords", [])),
+                raw_pointer=raw_pointer,
+                narrative_cause=str(data.get("narrative_cause", "")),
+                narrative_trigger=str(data.get("narrative_trigger", "")),
+                narrative_consequence=str(data.get("narrative_consequence", "")),
+                narrative_evaluation=str(data.get("narrative_evaluation", "")),
+                narrative_emotion=str(data.get("narrative_emotion", "")),
+                narrative_thought=str(data.get("narrative_thought", "")),
+            )
+
+
+5. scripts/probe_llm_switch.py 完整原文 + 运行输出
+
+完整原文见：d:\aiqg\emotion_agent\scripts\probe_llm_switch.py
+（文件头部有注释，函数 check 和 main，4 个检查项：默认 mock、deepseek_official 降级、
+ deepseek_third 降级、未知值抛 ValueError，最后恢复原值）
+
+运行输出：
+
+=== 检查 1：默认 mock 后端 ===
+  LLM_BACKEND = mock
+  默认值为 'mock' ✓
+  get_llm() 返回 MockLLM 实例 ✓
+  generate 返回字符串 ✓
+  返回包含 '[MOCK]' ✓
+  generate('测试') = [MOCK] 收到 prompt，长度 2
+
+=== 检查 2：切到 deepseek_official（密钥为空，应降级 mock） ===
+[llm_client] 警告：deepseek_official 的密钥/URL 为空，降级为 MockLLM
+  密钥为空时降级为 MockLLM ✓
+  返回类型 = MockLLM
+
+=== 检查 3：切到 deepseek_third（密钥为空，应降级 mock） ===
+[llm_client] 警告：deepseek_third 的密钥/URL 为空，降级为 MockLLM
+  密钥为空时降级为 MockLLM ✓
+  返回类型 = MockLLM
+
+=== 检查 4：切到未知值，应抛 ValueError ===
+  未知 backend 抛 ValueError ✓
+  异常信息: 未知 LLM_BACKEND: xxx_unknown
+
+  LLM_BACKEND 已恢复原值 ✓
+
+探针完成，全部断言通过
+
+
+6. scripts/run_real_llm_check.py 完整原文
+
+完整路径：d:\aiqg\emotion_agent\scripts\run_real_llm_check.py
+
+内容：
+- 尝试 import secrets_local，没有就提示并退出
+- 检查 DEEPSEEK_OFFICIAL_API_KEY 为空就提示退出
+- import DeepSeekLLM，构造实例，发测试 prompt，打印前 100 字
+- 不参与自动测试，不进 pytest
+
+
+7. pytest 输出 + main.py 三场景输出
+
+pytest 输出（15 passed）：
+
+tests/test_feature_encoder.py::test_empty_text PASSED
+tests/test_feature_encoder.py::test_punctuation_only PASSED
+tests/test_feature_encoder.py::test_zuobuhao_not_misjudged PASSED
+tests/test_feature_encoder.py::test_task_relevance PASSED
+tests/test_full_pipeline_smoke.py::test_encoder_mode_no_crash PASSED
+tests/test_limits.py::test_clip_bounds PASSED
+tests/test_memory_writeback.py::test_danger_score_formula PASSED
+tests/test_policy.py::test_policy_priority PASSED
+tests/test_reproducibility.py::test_config_seed_frozen PASSED
+tests/test_schemas.py::test_hippocampal_field_name PASSED
+tests/test_schemas.py::test_dimensions PASSED
+tests/test_schemas.py::test_weight_lengths PASSED
+tests/test_schemas.py::test_keyword_intersection PASSED
+tests/test_schemas.py::test_event_embedding_field PASSED
+tests/test_three_scenarios.py::test_action_expectations PASSED
+
+15 passed in 0.68s
+
+main.py 三场景输出：
+
+被骂     action=suppress     expected=suppress     PASS
+被夸     action=task_first   expected=task_first   PASS
+被质疑    action=reappraise   expected=reappraise   PASS
+
+
+8. hash 对比（SHA256 前 16 位）
+
+改动的 3 个文件：
+
+文件名 | 改前（M2 封版基准） | 改后（当前） | 备注
+config.py | D8F4AA96B975873C | 81C318D4669BA52C | 新增 LLM_* 三个常量
+llm_client.py | 93580C7D67A5029C | A2ADA2B77F02C4D1 | 重构为多后端工厂
+archiver.py | 8B489CBAF8DF0140 | F7B5AFB2D121B4C8 | organize_narrative 加 LLM 分支
+
+其余 22 个模块（与 M2 封版基准逐一比对）：
+
+文件名 | SHA256 前 16 位 | 一致
+schemas.py | 1EFEA80C332E6E09 | 是
+state.py | BD6E89D417F737AA | 是
+pipeline.py | D9A1FD207DAAD009 | 是
+main.py | A580118515DBF54C | 是
+emotion.py | 5C3B62AE2F1F2116 | 是
+intercept.py | F594D53EDADBC353 | 是
+policy.py | 0E541AF602A60E9A | 是
+fast_path.py | 25D837BF496060BD | 是
+slow_path.py | 34540EF43E1CE240 | 是
+xinguang.py | 694FCCDA9BDB885E | 是
+hippocampal_evaluator.py | 4B7317DE2B03F7CF | 是
+memory_graph.py | FD7FB1058E22F8D9 | 是
+feature_encoder.py | 7E960C11F2D54FD3 | 是
+event_parser.py | BD7F71EAB7F1264C | 是
+emotion_releaser.py | 98FC7D769E003194 | 是
+short_term_buffer.py | 6012DC2F7211622E | 是
+raw_log.py | 29F66391403E9A99 | 是
+decompressor.py | C2D21C7D882F278E | 是
+state_translator.py | B9EA5135060DA6A2 | 是
+prompt_builder.py | 15DE0D3EEA9C8D1E | 是
+logger.py | 76A179D173979B1D | 是
+multimodal.py | 6C2978D1A872E615 | 是
+
+全部一致。
+
+
+9. 一句话确认
+
+secrets_local.py 未被任何回报贴出，其内容为空模板（密钥字段为空字符串），
+已列入 .gitignore，后续所有快照排除命令均应包含 secrets_local.py。
+
+停止，等待裁决。

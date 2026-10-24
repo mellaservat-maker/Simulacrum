@@ -1,0 +1,79 @@
+T014.5 hash 基准
+
+生成日期：2026-10-21
+工作目录：d://aiqg//emotion_agent（014.5：KAPPA=0.6 + 疲劳代谢 W_PFC_RECOVERY + probe_t36_metabolism）
+收录范围：全部 .py 文件（与 T014 基准同口径）
+排除项：secrets_local.py、__pycache__、.pytest_cache、logs
+排序：按文件相对路径字母序
+文件总数：70
+
+F7B5AFB2D121B4C8  archiver.py
+11DCA3E9FBBBF06B  config.py
+C2D21C7D882F278E  decompressor.py
+528806BDAD7CBCBF  embedder.py
+5C3B62AE2F1F2116  emotion.py
+0C16D5DAB7BDDD39  emotion_releaser.py
+4FF51DAB17D0EF0E  evaluator.py
+BFFC141291CB680C  event_parser.py
+25D837BF496060BD  fast_path.py
+7E960C11F2D54FD3  feature_encoder.py
+4B7317DE2B03F7CF  hippocampal_evaluator.py
+A12141EA20FF045D  intercept.py
+89A1539D5B688D6A  llm_client.py
+76A179D173979B1D  logger.py
+A580118515DBF54C  main.py
+FD7FB1058E22F8D9  memory_graph.py
+6C2978D1A872E615  multimodal.py
+A2C6DB4251A1186E  pipeline.py
+0E541AF602A60E9A  policy.py
+15DE0D3EEA9C8D1E  prompt_builder.py
+29F66391403E9A99  raw_log.py
+1EFEA80C332E6E09  schemas.py
+55539BB0925A6E62  scripts/auto_chat.py
+C600BA30149147B8  scripts/chat_cli.py
+A7D263E1283AC1CE  scripts/probe_archiver.py
+AFB82DE983DA51F3  scripts/probe_buffer.py
+0A0198EFC4C01F75  scripts/probe_decompressor.py
+C2A9032BB68FD94D  scripts/probe_embedder.py
+F3D98A8BF2CBB815  scripts/probe_heuristic_change.py
+0982754499135297  scripts/probe_llm_retry.py
+EAF7273548E74E36  scripts/probe_llm_switch.py
+929FE0AB2D0F6FBF  scripts/probe_memory_pipeline.py
+A7BBDD669EB83309  scripts/probe_numeric.py
+35E8E6583CF88AC0  scripts/probe_planC.py
+710BBFDEE7B8500B  scripts/probe_prompt_render.py
+215721FABD15DBC9  scripts/probe_rank_divergence.py
+D59C497E50CECD0D  scripts/probe_read_side.py
+4A649C7711B2CF4A  scripts/probe_real_prompt.py
+D8FD1862844A2FA7  scripts/probe_recall_with_history.py
+5EEA5D34E4F7A5F5  scripts/probe_s_evaluator.py
+C6CDF2734DDAB988  scripts/probe_session.py
+D97773BE9BED5167  scripts/probe_t24.py
+00EE1323009B28DC  scripts/probe_t33_persistence.py
+4450089F3431596E  scripts/probe_t34_crash.py
+D7A4F290E4378EBB  scripts/probe_t35_collapse.py
+344E0C614F86F674  scripts/probe_t36_metabolism.py
+50CAED714278DCC5  scripts/probe_t36_question.py
+E4CE5FBBABA90369  scripts/probe_t37_deterministic.py
+807F17B4A25AA54E  scripts/probe_t3b_smoke.py
+7C79AA917181A972  scripts/probe_v43_realstate.py
+0A2547C197C2AAB3  scripts/probe_v_inputs.py
+6F08E5A422AC8DC4  scripts/probe_xinguang.py
+70D7B9EF08A04C12  scripts/probe_xinguang_budget.py
+E00CD6BEEBDD0D39  scripts/run_real_llm_check.py
+C17A06D712CEA634  scripts/verify_scenarios.py
+6012DC2F7211622E  short_term_buffer.py
+89E09EBF17F46211  slow_path.py
+BB6CA7547DDB20D7  state.py
+A5F0552D2E5DC3A8  state_translator.py
+E3B0C44298FC1C14  tests/__init__.py
+D8E676625B5CF4CE  tests/fixtures.py
+78C9F71F0B205E74  tests/test_feature_encoder.py
+84B3B1B3D0A5C2DB  tests/test_full_pipeline_smoke.py
+F065D29062FB22C4  tests/test_limits.py
+7AEC84A7DD93A329  tests/test_memory_writeback.py
+E17BAAE10E8F5D9D  tests/test_policy.py
+29EC9B5526EE9987  tests/test_reproducibility.py
+3412C5CB42284985  tests/test_schemas.py
+C41959EAC1B35013  tests/test_three_scenarios.py
+694FCCDA9BDB885E  xinguang.py

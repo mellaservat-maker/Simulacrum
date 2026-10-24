@@ -52,5 +52,15 @@ class ShortTermBuffer:
         self._records = remaining
         return list(flushed), list(remaining)
 
+    def prepend_many(self, records) -> None:
+        """把一批更早的记录插回队首（[053] 归档失败回灌用）。
+
+        语义：这批记录比缓冲区现有内容更早，必须放回队首才能保持 round_id
+        顺序；不做去重（round_id 唯一性由调用方保证）。
+        """
+        if not records:
+            return
+        self._records = list(records) + self._records
+
     def __len__(self) -> int:
         return len(self._records)

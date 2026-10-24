@@ -1,0 +1,155 @@
+M2 读取侧开启回报
+日期：2026-10-06
+状态：等待裁决
+
+
+1. config.py 中 MEMORY_READ_ENABLED 改动原文
+
+改前：
+MEMORY_READ_ENABLED = False     # 读取侧：评估时查记忆、影响结果（默认关）
+
+改后：
+MEMORY_READ_ENABLED = True      # 读取侧：评估时查记忆、影响结果（M2 开启，暂不影响 action）
+
+
+2. chat_cli.py 改动处原文
+
+改前：
+            print(f"AI：{llm_output}")
+            buf_len = len(st["memory_buffer"])
+            pkg_count = len(st["archiver"].get_packages())
+            print(f"[缓冲区: {buf_len} 条 | 已归档: {pkg_count} 个包]")
+
+改后：
+            print(f"AI：{llm_output}")
+            buf_len = len(st["memory_buffer"])
+            pkg_count = len(st["archiver"].get_packages())
+            recalled = st.get("recalled_memory")
+            if recalled is None:
+                recalled_str = "无"
+            else:
+                recalled_str = str(recalled)
+            print(f"[缓冲区: {buf_len} 条 | 已归档: {pkg_count} 个包 | 召回: {recalled_str}]")
+
+
+3. pipeline.py 改动的 log 字段那一行
+
+两处（run_scenario 和 run_turn 各一处）都加了同一行：
+
+        "llm_output": llm_output,
+        "recalled_memory": st["recalled_memory"],
+    }
+
+
+4. scripts/probe_read_side.py 完整原文
+
+完整路径：d:\aiqg\emotion_agent\scripts\probe_read_side.py
+
+内容要点：
+- 调 run_session(["被骂"] * 8, fixture 模式)
+- 打印每轮 recalled_memory 状态
+- 三个断言：第 6 轮 None、第 7 轮非 None 且含字段、第 8 轮非 None
+- 打印 MEMORY_READ_ENABLED 最终值
+
+
+5. 探针运行输出原文
+
+=== 读取侧开关状态 ===
+MEMORY_READ_ENABLED = True
+
+=== 运行 8 轮被骂会话 ===
+总轮数: 8
+归档包数: 1
+
+  第 1 轮: recalled_memory = None
+  第 2 轮: recalled_memory = None
+  第 3 轮: recalled_memory = None
+  第 4 轮: recalled_memory = None
+  第 5 轮: recalled_memory = None
+  第 6 轮: recalled_memory = None
+  第 7 轮: recalled_memory = 有 (emotion_value=0.85, polarity=negative)
+  第 8 轮: recalled_memory = 有 (emotion_value=0.85, polarity=negative)
+
+断言 1：第 6 轮 recalled_memory 为 None → 通过
+断言 2：第 7 轮 recalled_memory 非 None 且含字段 → 通过
+断言 3：第 8 轮 recalled_memory 非 None → 通过
+
+最终 MEMORY_READ_ENABLED = True
+
+探针完成，全部断言通过
+
+
+6. 断言结果
+
+通过。三项断言全部通过。
+
+
+7. pytest 输出 + main.py 三场景 action 输出
+
+pytest 输出（15 passed）：
+
+tests/test_feature_encoder.py::test_empty_text PASSED
+tests/test_feature_encoder.py::test_punctuation_only PASSED
+tests/test_feature_encoder.py::test_zuobuhao_not_misjudged PASSED
+tests/test_feature_encoder.py::test_task_relevance PASSED
+tests/test_full_pipeline_smoke.py::test_encoder_mode_no_crash PASSED
+tests/test_limits.py::test_clip_bounds PASSED
+tests/test_memory_writeback.py::test_danger_score_formula PASSED
+tests/test_policy.py::test_policy_priority PASSED
+tests/test_reproducibility.py::test_config_seed_frozen PASSED
+tests/test_schemas.py::test_hippocampal_field_name PASSED
+tests/test_schemas.py::test_dimensions PASSED
+tests/test_schemas.py::test_weight_lengths PASSED
+tests/test_schemas.py::test_keyword_intersection PASSED
+tests/test_schemas.py::test_event_embedding_field PASSED
+tests/test_three_scenarios.py::test_action_expectations PASSED
+
+15 passed in 4.97s
+
+main.py 三场景 action：
+
+被骂     action=suppress     expected=suppress     PASS
+被夸     action=task_first   expected=task_first   PASS
+被质疑    action=reappraise   expected=reappraise   PASS
+
+读取侧开启后，三场景 action 未变，符合预期。
+
+
+8. hash 对比（SHA256 前 16 位）
+
+改动的 3 个文件：
+
+文件名 | 改前 | 改后
+config.py | 702C524EA80E8F0B | 37BA0B788D86B6A4
+chat_cli.py | FABE1E9C729105D7 | BC4AE2CC74AC004E
+pipeline.py | D9A1FD207DAAD009 | EDC1F26A8720584B
+
+其余模块与上一轮基准一致（本次未触碰）：
+
+state_translator.py A5F0552D2E5DC3A8
+llm_client.py A2ADA2B77F02C4D1
+archiver.py F7B5AFB2D121B4C8
+schemas.py 1EFEA80C332E6E09
+state.py BD6E89D417F737AA
+main.py A580118515DBF54C
+emotion.py 5C3B62AE2F1F2116
+intercept.py F594D53EDADBC353
+policy.py 0E541AF602A60E9A
+fast_path.py 25D837BF496060BD
+slow_path.py 34540EF43E1CE240
+xinguang.py 694FCCDA9BDB885E
+hippocampal_evaluator.py 4B7317DE2B03F7CF
+memory_graph.py FD7FB1058E22F8D9
+feature_encoder.py 7E960C11F2D54FD3
+event_parser.py BD7F71EAB7F1264C
+emotion_releaser.py 98FC7D769E003194
+short_term_buffer.py 6012DC2F7211622E
+raw_log.py 29F66391403E9A99
+decompressor.py C2D21C7D882F278E
+prompt_builder.py 15DE0D3EEA9C8D1E
+logger.py 76A179D173979B1D
+multimodal.py 6C2978D1A872E615
+
+全部一致。
+
+停止，等待裁决。

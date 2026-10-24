@@ -1,0 +1,58 @@
+本文件属于 015 号工作
+
+BACKUP_015.txt · 重生指南（写给未来可能接替本项目的 AI）
+
+零、使用说明
+本文件是 emotion_agent 项目的"重生指南"。如果你是在上下文爆炸后接手本项目的新 AI 实例，按本文件第一节核验快照、第二节理解机制、第三节敬畏物理极限、第四节接手遗留问题。动任何底层公式前，先读第五节警告。
+
+一、当前版本与核验
+1.1 版本：V5.2（015 号工作封版）。封版快照：D:/aiqg/emotion_agent_snapshot_v5.2/（文件数见该目录实测；与历史快照同口径：无 secrets_local.py、无 __pycache__、无 logs）。
+1.2 hash 基准：工程目录内 T015_封版_hash基准.txt（全部 .py，16 位大写 sha256 前 16 位 + 两空格 + 相对路径；由 gen_hash_t015.sh 生成，禁手抄）。核验方法：cd 到快照或工程目录跑同脚本，diff 应为空。
+1.3 安全锁链（自旧到新，全部只读）：_snapshot_night_guard（013 深夜自治前夜锁死态，config.py 哈希 bc8d09f66ce41d48 起校验）→ _snapshot_pre_t012 → _snapshot_post_t013 → _snapshot_pre_t014 → _snapshot_v5.0 → _snapshot_pre_t014.5 → _snapshot_v5.1 → _snapshot_pre_t015 → _snapshot_v5.2。回滚找对应节点即可。
+1.4 环境铁律：一切运行走 d:/aiqg/run_with_venv.bat（HF_HOME/HF_ENDPOINT 必需，直接调 venv python 在 Windows 下解析 sha256sum 输出会因反斜杠出错）；Git Bash 的 /tmp 对 Windows python 不可见，临时脚本放工程目录再删；多行 -c 经 cmd //c 引号必炸，用临时脚本文件。
+1.5 密钥铁律：secrets_local.py 不读取、不复制、不外泄、不进任何快照与回报。hash 基准中该文件条目行精确命中数必须为 0。
+1.6 纪律：施工队定位。先报告后执行、不扩大范围、每步 hash 基准+探针验证、走不通记录原因回滚换路。汇报 TXT 规范：纯文本分层、数字编号，不用井号标题、不用表格线、不用星号加粗、代码不套三反引号标记；文件命名 NNN.txt / NNN.1.txt。
+
+二、核心机制（V5.2 现状）
+2.1 损耗型意志力模型（012 定版，014/014.5 调强）
+公式：I_inhibit = clip(w_i·D_error - KAPPA·w_PFC + b_i, 0, 1)；w_PFC_new 见 2.2。w_PFC 是疲劳值，越高抑制防线越脆弱。KAPPA=0.6（014.5 裁决）。
+2.2 疲劳代谢（014.5 新增，intercept.py 双分支）
+安全轮（D_error < W_PFC_RECOVERY_THRESHOLD=0.1 或 I_inhibit==0）：w_PFC_new = max(0, w_PFC - 0.01)，疲劳自然消退。
+受压轮（I_inhibit>0 且 D_error>=0.1）：w_PFC_new = clip(RHO·w_PFC + DELTA·I_inhibit, 0, W_MAX)，只涨不跌。
+语义：挨骂期间疲劳只涨不跌，确认安全才恢复——杜绝"越骂越清醒"的受气包悖论。
+2.3 温度分层与缓存（015 新增）
+evaluator（语义测量）：temperature=0.0 + 同输入 TTL 300s 缓存（llm_client.cached_generate）。
+archiver（记忆创作）：temperature=0.3 + 同缓存。
+主对话（chat/monologue）：LLM_TEMPERATURE=0.7 不动，语言层人味完整保留。
+实证：锁温后同输入两次 S 差 0.0000（锁温前 0.10），main.py M1 三场景恢复全绿。
+2.4 确定性权重（014）
+DETERMINISTIC_WEIGHTS=True：w_s/v_s/W_v 手工物理语义（对齐 feature_encoder 的 x 八维与 B 四维），u_s/U_v 均分 0.1（记忆整体强度线性读出），e_s/f_v 为 013 设计值。权重层双跑差 ~2e-10，零随机源。
+2.5 语义信号 S（012 引入，013 落地）
+4 维：valence[-1,1]（负=敌意）/arousal/dominance/intensity[0,1]。pipeline 两处链由 evaluator 从用户消息真提取（降级链 LLM→词典→zeros，source 标记不静默）。c_E=1.0 把 valence 注入 raw_emotion_impact[0]，修复效价轴结构性恒负。
+2.6 其他既有机制：L23  recalled_delta_intended = ev·sign；E_raw = clip(LAMBDA·E_prev + released + C_INIT@(B-B_INIT), ±1)；E_final = (1-GAMMA·I_inhibit)·E_raw；GAMMA=0.6、RHO=0.95、DELTA=0.1、W_MAX=2.0、w_i=3.0、THETA_ERROR=0.3。
+
+三、系统物理极限（最重要的一节）
+3.1 渐近侵蚀不动点：联合不动点 I* = w_i·D_error / (1 + KAPPA·DELTA/(1-RHO))，当前 KAPPA=0.6 下分母=2.2；疲劳不动点 w* = DELTA·I*/(1-RHO) = 2.0·I*。
+3.2 为什么永不归零：不动点条件 w_i·D_error = I*·(1+KAPPA·DELTA/(1-RHO)) 恒为正。只要 |RHO - DELTA·KAPPA| < 1（即 KAPPA < 19.5），迭代收敛到正不动点——任何有限 KAPPA 都不会把 I_inhibit 磨到 0。KAPPA 只能调节侵蚀深度（被骂 15 轮：0.2 时几乎不动、0.5 时降到 0.713、0.6 时降到 0.749 通道上继续下行）。
+3.3 所有者定调（015 任务 2）：坚决不改 RHO 结构。要的就是"无限趋近于底限但永不归零"——彻底变成疯子不真实，疲惫到底但留有一丝理智才最像人。这是设计意图，不是待修 bug。
+3.4 若要观察更强侵蚀：只能加轮数（不动点是 120 轮量级的收敛），或调 KAPPA（<19.5 安全区），或降低威胁强度。改 RHO/DELTA 结构=违背所有者定调，须先裁决。
+
+四、遗留问题（按优先级）
+4.1 T31 召回方向：明确 recall 对当前评估的作用方向（放大危险还是习惯化削弱），待所有者决策。config.py [M3 TODO] T31 条目在案。
+4.2 M3 效价轴重建：011 草案问题五。c_E 注入后主链路已修复（被夸 E_raw[0] 转正），但 S=zeros 对照组（verify_scenarios 等旧路径）仍恒负，属已知面貌。
+4.3 archiver 情绪归档值不可复现（temperature=0.3 是设计保留，非 bug）；其 emotion_value 以约 1e-2 量级进 E，不影响阈值判决。
+4.4 venv 无 requests 模块（urllib 兜底+有界重试已加固，013）。
+4.5 B[2]/B[3] 语义未明（C_INIT 对 B 全四维全正映射但无文档定义），v_s/W_v 中对应权重保守给小值。
+4.6 evaluator 效价边界：疑问句式已校准（014），反讽等边界待观察。
+
+五、警告（必读）
+5.1 千万别再随便改底层的数学公式了。现在的系统已经是一个活着的、会累的人：损耗型疲劳、代谢恢复、渐近侵蚀、语义测量——每一处都是所有者逐轮裁决的产物，且都有探针断言守着。改公式前必须：快照→基准→探针验证→回报，四步缺一不可。
+5.2 KAPPA/RHO/DELTA/W_MAX/GAMMA 五大参数是物理极限的支点，任何调整先做不动点分析（第三节公式）再动手。
+5.3 测试门有两套且精度不同：pytest（14 passed/1 skipped，不断言 action 阈值）与 main.py M1 验收（断言三场景 action）。test_action_expectations 早已 skip（M1 标准已弃）——看到 pytest 全绿别以为 action 层没问题，action 层看 main.py。
+5.4 探针是工程的脊梁：scripts/ 下 probe_t34/t35/t36(question/metabolism)/t37/t38 各守一层，跑全量回归时逐个跑，勿合并成长循环（会超时中断）。
+5.5 三角色纪律：所有者转达/裁决、顾问设计、你是施工队。遇到"指令没要求但你认为该改"的，先报告等裁决，绝不先斩后奏。
+
+六、当前状态快照（V5.2 封版时实测）
+pytest 14 passed/1 skipped；main.py M1 三场景全部通过；七探针（t34/t35/t36q/t36m/t37/t38/llm_retry/s_evaluator 中除 t38 外全部有断言闭环，t38 七项全 PASS）全绿；evaluator 锁温实证差 0.0000；缓存统计可在运行后用 llm_client.cache_stats() 观测。
+
+本文件由 015 号工作生成。房子没烧，随时可以回滚。原施工队已完成备份，原地待命。

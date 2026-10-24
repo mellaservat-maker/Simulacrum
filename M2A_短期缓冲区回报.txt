@@ -1,0 +1,280 @@
+M2-A 短期缓冲区回报
+日期：2026-10-06
+状态：等待裁决
+
+
+1. schemas.py 中 MemoryPackage 的完整定义原文
+
+@dataclass
+class MemoryPackage:
+    # 数值层（系统用）
+    seq: int = 0
+    emotion_value: float = 0.0
+    emotion_polarity: str = "neutral"
+    keywords: List[str] = field(default_factory=list)
+    raw_pointer: str = ""
+
+    # 叙事层（AI 读，分标题）
+    narrative_cause: str = ""
+    narrative_trigger: str = ""
+    narrative_consequence: str = ""
+    narrative_evaluation: str = ""
+    narrative_emotion: str = ""
+    narrative_thought: str = ""
+
+
+2. short_term_buffer.py 完整原文
+
+# ============================================================
+# short_term_buffer.py · M2-A · 短期缓冲区
+# 存储每一轮原始记录，供未来归档/反思使用
+# ============================================================
+
+from typing import List, Dict, Any
+
+
+class ShortTermBuffer:
+    """短期缓冲区：按顺序存储每一轮的原始记录。
+
+    每条记录字段（由调用方保证）：
+      round_id     轮次号
+      user_input   用户输入
+      ai_output    AI 输出
+      timestamp    时间戳（秒）
+    """
+
+    def __init__(self, default_keep: int = 2):
+        self._records: List[Dict[str, Any]] = []
+        self._default_keep = default_keep
+
+    def append(self, round_data: Dict[str, Any]) -> None:
+        """追加一轮记录。"""
+        self._records.append(round_data)
+
+    def get_all(self) -> List[Dict[str, Any]]:
+        """返回全部记录（按时间顺序）。"""
+        return list(self._records)
+
+    def get_recent(self, n: int = None) -> List[Dict[str, Any]]:
+        """返回最近 n 轮。n 缺省时用 default_keep。"""
+        if n is None:
+            n = self._default_keep
+        return list(self._records[-n:]) if n > 0 else []
+
+    def flush_keep_recent(self, n: int = None):
+        """清空除最近 n 轮之外的所有内容，返回被清掉的部分。
+
+        返回: (flushed_list, remaining_list)
+        """
+        if n is None:
+            n = self._default_keep
+        if n <= 0:
+            flushed = list(self._records)
+            self._records = []
+            return flushed, []
+        if n >= len(self._records):
+            return [], list(self._records)
+        flushed = self._records[:-n]
+        remaining = self._records[-n:]
+        self._records = remaining
+        return list(flushed), list(remaining)
+
+    def __len__(self) -> int:
+        return len(self._records)
+
+
+3. scripts/probe_buffer.py 完整原文
+
+# ============================================================
+# probe_buffer.py · M2-A 探针
+# 验证 ShortTermBuffer 的追加 / 读取 / 刷出逻辑
+# ============================================================
+
+import sys
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+from short_term_buffer import ShortTermBuffer
+
+
+def make_round(rid, user, ai, ts):
+    return {
+        "round_id": rid,
+        "user_input": user,
+        "ai_output": ai,
+        "timestamp": ts,
+    }
+
+
+def main():
+    buf = ShortTermBuffer(default_keep=2)
+
+    # 1. 追加 5 轮
+    buf.append(make_round(1, "你好", "你好呀，有什么事吗？", 1000.0))
+    buf.append(make_round(2, "你今天怎么样", "还行吧，就那样", 1001.0))
+    buf.append(make_round(3, "你这都做不好", "……抱歉，我再试试", 1002.0))
+    buf.append(make_round(4, "做得不错", "谢谢夸奖，我会继续努力的", 1003.0))
+    buf.append(make_round(5, "还有个问题", "你说", 1004.0))
+
+    print(f"追加 5 轮后，buffer 长度 = {len(buf)}")
+
+    # 2. 打印全部内容
+    print()
+    print("=== 全部内容 ===")
+    for r in buf.get_all():
+        print(f"  round {r['round_id']}: user='{r['user_input']}' ai='{r['ai_output']}' ts={r['timestamp']}")
+
+    # 3. 刷出，保留最近 2 轮
+    flushed, remaining = buf.flush_keep_recent(2)
+
+    print()
+    print("=== 被清掉的部分（前 3 轮） ===")
+    for r in flushed:
+        print(f"  round {r['round_id']}: user='{r['user_input']}'")
+
+    print()
+    print("=== 保留的部分（后 2 轮） ===")
+    for r in remaining:
+        print(f"  round {r['round_id']}: user='{r['user_input']}'")
+
+    # 4. 断言
+    print()
+    print("=== 断言检查 ===")
+
+    ok = True
+
+    # 清掉 3 轮
+    if len(flushed) != 3:
+        print(f"TODO_REVIEW: 被清掉的轮数 = {len(flushed)}，期望 3")
+        ok = False
+    else:
+        print(f"  被清掉轮数 = {len(flushed)} ✓")
+
+    # 保留 2 轮
+    if len(remaining) != 2:
+        print(f"TODO_REVIEW: 保留轮数 = {len(remaining)}，期望 2")
+        ok = False
+    else:
+        print(f"  保留轮数 = {len(remaining)} ✓")
+
+    # 保留的是最后 2 轮（round 4 和 5）
+    if remaining[0]["round_id"] != 4 or remaining[1]["round_id"] != 5:
+        print(f"TODO_REVIEW: 保留的不是最后 2 轮，实际 round_id = {[r['round_id'] for r in remaining]}")
+        ok = False
+    else:
+        print(f"  保留的是最后 2 轮（round 4, 5） ✓")
+
+    # buffer 里剩 2 条
+    if len(buf) != 2:
+        print(f"TODO_REVIEW: 刷出后 buffer 长度 = {len(buf)}，期望 2")
+        ok = False
+    else:
+        print(f"  刷出后 buffer 长度 = {len(buf)} ✓")
+
+    # 被清掉的是前 3 轮（round 1, 2, 3）
+    flushed_ids = [r["round_id"] for r in flushed]
+    if flushed_ids != [1, 2, 3]:
+        print(f"TODO_REVIEW: 被清掉的不是前 3 轮，实际 round_id = {flushed_ids}")
+        ok = False
+    else:
+        print(f"  被清掉的是前 3 轮（round 1, 2, 3） ✓")
+
+    # get_recent 默认 n=2
+    recent = buf.get_recent()
+    if len(recent) != 2:
+        print(f"TODO_REVIEW: get_recent() 默认返回 {len(recent)} 条，期望 2")
+        ok = False
+    else:
+        print(f"  get_recent() 默认返回 2 条 ✓")
+
+    print()
+    if ok:
+        print("断言全部通过")
+    else:
+        print("TODO_REVIEW: 断言失败")
+
+    print()
+    print("探针完成")
+
+    return 0 if ok else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+
+
+4. 探针运行输出原文
+
+追加 5 轮后，buffer 长度 = 5
+
+=== 全部内容 ===
+  round 1: user='你好' ai='你好呀，有什么事吗？' ts=1000.0
+  round 2: user='你今天怎么样' ai='还行吧，就那样' ts=1001.0
+  round 3: user='你这都做不好' ai='……抱歉，我再试试' ts=1002.0
+  round 4: user='做得不错' ai='谢谢夸奖，我会继续努力的' ts=1003.0
+  round 5: user='还有个问题' ai='你说' ts=1004.0
+
+=== 被清掉的部分（前 3 轮） ===
+  round 1: user='你好'
+  round 2: user='你今天怎么样'
+  round 3: user='你这都做不好'
+
+=== 保留的部分（后 2 轮） ===
+  round 4: user='做得不错'
+  round 5: user='还有个问题'
+
+=== 断言检查 ===
+  被清掉轮数 = 3 ✓
+  保留轮数 = 2 ✓
+  保留的是最后 2 轮（round 4, 5） ✓
+  刷出后 buffer 长度 = 2 ✓
+  被清掉的是前 3 轮（round 1, 2, 3） ✓
+  get_recent() 默认返回 2 条 ✓
+
+断言全部通过
+
+探针完成
+
+
+5. 断言结果
+
+通过。6 项断言全部通过，无 TODO_REVIEW。
+
+
+6. M1 / V4.3 模块 hash 对比
+
+基线：_snapshot_v43 共 31 个 .py 文件（含 tests/）。
+
+仅 schemas.py 有变化：
+  改前：719FCF9AF15DF2F4D2F7C4D86FDC4F55
+  改后：7158CD3FDFB532B3C70EB91F8EE6B9D7
+
+其余 20 个非测试模块 hash 全部一致（30 个文件与 V4.3 快照完全相同）：
+  config.py                88D5D501280CFC8E2F98E798ECB38A4D
+  emotion.py               E3E5C1D085B4CC01B7407132C54F75F6
+  emotion_releaser.py      C8A137C089F7DD2F607DA37506D3AFD4
+  event_parser.py          7D082ABED67C7EBF007A8279794D99C0
+  fast_path.py             10052746F4E9B8AB34E458A79C1AC8C6
+  feature_encoder.py       AA24A27C2ABE3253E70817463B980CD2
+  hippocampal_evaluator.py B3F49DDBDB0697F8BB2F6C350DBAAEB1
+  intercept.py             AFCBC43EA0F81DE0CB7FF27D24B26295
+  llm_client.py            B2413ABD7812441103103720D7C39286
+  logger.py                F60861D7DFFCF522DDADBEB35B0574A4
+  main.py                  0BB27A9427E5A5357B51BB6E4CDC6724
+  memory_graph.py          5F870C25F4E1B7668C7C41C0EF69669A
+  multimodal.py            1D951F22D16E0E66386C233A068D75AC
+  pipeline.py              2BA50932FBB58789C21A12E7DB663702
+  policy.py                AC9BDCDC20A68577D56F042C55A7608B
+  prompt_builder.py        318FB09C928D50AE8F9987AE7C7EFCD9
+  slow_path.py             210AAC533BFE777CEE3A91B13FEC57D7
+  state.py                 6827B7046DDDC63710025E1E54D28476
+  state_translator.py      AB44437B2D0382D106762BD3B50365DD
+  xinguang.py              243DC8C2B731787C4B9DF0870A93A09E
+
+tests/ 下所有文件 hash 也全部一致。
+
+新增文件（不属于 V4.3 基线）：
+  short_term_buffer.py     FD5C71FF7793B35A3A9F5346CB712FFD
+  scripts/probe_buffer.py  8BDFD6EF44C12CF4961EE4DA74BD693D
+
+停止，等待裁决。

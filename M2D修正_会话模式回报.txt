@@ -1,0 +1,402 @@
+M2-D 修正（会话模式）回报
+日期：2026-10-06
+状态：等待裁决
+
+
+1. pipeline.py 中新增的 run_turn 和 run_session 完整原文
+
+def run_turn(state, scenario, feature_mode="fixture"):
+    """单轮执行（不 reset），使用传入的 state。
+
+    与 run_scenario 的唯一区别：不调用 reset_state，直接用外部传入的 state，
+    支持跨多轮积累 memory_buffer / raw_log / archiver 等。
+    """
+    fx = get_fixture(scenario)
+    st = state
+
+    now = time.time()
+
+    if feature_mode == "fixture":
+        x = fx["x"]
+        x_fast = fx["x_fast"]
+        event = event_parse(
+            fx["input"],
+            event_severity=fx["event_severity"],
+            importance=fx["importance"],
+            emotion_weight=fx["emotion_weight"],
+            unfinished=fx["unfinished"],
+            danger_score=fx["danger_score"],
+        )
+    elif feature_mode == "encoder":
+        event = event_parse(
+            fx["input"],
+            event_severity=fx["event_severity"],
+            importance=fx["importance"],
+            emotion_weight=fx["emotion_weight"],
+            unfinished=fx["unfinished"],
+            danger_score=fx["danger_score"],
+        )
+        x, x_fast = feature_encode(
+            event, st["M_prev"], st["HabituationSignal_prev"], st["B"], st["memory_graph"]
+        )
+    else:
+        raise ValueError(f"Unknown feature_mode: {feature_mode}")
+
+    # 心光预算（用回合开始的 B）
+    B = st["B"]
+    B_xg = update_xinguang_budget(B[0], B[1])
+
+    # 海马体评估
+    hippo = hippocampal_evaluate(event, st["memory_graph"], x, B_xg, now)
+    M = hippo["M"]
+    ReframedContext = hippo["ReframedContext"]
+    HabituationSignal = hippo["HabituationSignal"]
+    HistoricalResidual = hippo["HistoricalResidual"]
+    M_text = hippo["M_text"]
+
+    # 读取侧（M2-D，默认关闭，只记录不影响评估）
+    if MEMORY_READ_ENABLED:
+        packages = st["archiver"].get_packages()
+        if packages:
+            latest = packages[-1]
+            recalled = st["decompressor"].for_emotion_evaluator(latest)
+            st["recalled_memory"] = recalled
+    else:
+        st["recalled_memory"] = None
+
+    # 快通路（可能更新 B[1]）
+    D_fast, B = run_fast_path(x_fast, B)
+
+    # 慢通路（用更新后的 B）
+    D_slow, V = run_slow_path(x, ReframedContext, M, B, st["w_PFC"], HabituationSignal)
+
+    # 情绪释放器
+    raw_emotion_impact, released_impact, release_rate = run_releaser(V, D_fast, HabituationSignal)
+
+    # 情绪加点
+    E_raw = run_emotion(st["E_prev"], released_impact, B)
+
+    # 拦截层
+    neg_intensity, S_E, D_error, I_inhibit, E_final, w_PFC_new = run_intercept(E_raw, st["w_PFC"])
+
+    # 策略
+    action = policy_minimal(E_final, I_inhibit, fx["event_severity"])
+
+    # 状态翻译 + prompt + LLM
+    monologue = state_to_prompt(E_final, I_inhibit, M_text, HistoricalResidual, HabituationSignal)
+    prompt = build_prompt(monologue, fx["input"])
+    llm_output = get_llm().generate(prompt)
+
+    # 回写识海（5 字段，5.5.14）
+    event.event_severity = fx["event_severity"]
+    event.danger_score = float(np.clip(V[1] * 2 - 0.5, -1.0, 1.0))
+    event.importance = fx["importance"]
+    event.emotion_weight = fx["emotion_weight"]
+    event.unfinished = fx["unfinished"]
+    st["memory_graph"].add(event)
+
+    log = {
+        "x": x,
+        "x_fast": x_fast,
+        "B": B,
+        "D_fast": D_fast,
+        "B_xg": B_xg,
+        "D_slow": D_slow,
+        "V": V,
+        "raw_emotion_impact": raw_emotion_impact,
+        "released_impact": released_impact,
+        "E_raw": E_raw,
+        "neg_intensity": neg_intensity,
+        "S_E": S_E,
+        "D_error": D_error,
+        "I_inhibit": I_inhibit,
+        "E_final": E_final,
+        "w_PFC": w_PFC_new,
+        "release_rate": release_rate,
+        "HabituationSignal": HabituationSignal,
+        "HistoricalResidual": HistoricalResidual,
+        "M_text": M_text,
+        "action": action,
+        "feature_mode": feature_mode,
+        "llm_output": llm_output,
+    }
+
+    log_path = os.path.join(LOGS_DIR, LOG_FILES[scenario])
+    write_log(log_path, log)
+
+    # 写入侧（M2-D）：每轮结束写缓冲区，达阈值归档
+    if MEMORY_WRITE_ENABLED:
+        st["round_counter"] += 1
+        st["memory_buffer"].append({
+            "round_id": st["round_counter"],
+            "user_input": fx["input"],
+            "ai_output": llm_output,
+            "timestamp": now,
+        })
+        if st["archiver"].should_archive():
+            st["archiver"].archive()
+
+    return log
+
+
+def run_session(scenarios, feature_mode="fixture", seed=42):
+    """多轮会话：跨轮共享 state，写入侧可以积累。
+
+    参数:
+      scenarios: 场景名列表，每一项是一个场景（如 "被骂"）
+      feature_mode: fixture / encoder
+      seed: 随机种子
+
+    返回: (logs, st)
+      logs: 每轮 log 的列表
+      st: 会话结束后的最终 state
+    """
+    st = reset_state(seed=seed)
+    logs = []
+    for sc in scenarios:
+        log = run_turn(st, sc, feature_mode=feature_mode)
+        logs.append(log)
+    return logs, st
+
+
+2. pipeline.py 中 run_scenario 函数体前后对比说明
+
+说明：run_scenario 函数未被修改。
+
+验证方式：
+  1. M2-D 时 pipeline.py 全文共 166 行，run_scenario 是唯一函数，占据第 40~166 行。
+  2. 本次修改采用"文件末尾追加"策略，不修改原文件前 166 行的任何内容，
+     只在第一个 return log 之后追加 run_turn 和 run_session 两个新函数。
+  3. 函数级 hash 验证：提取当前 run_scenario 函数体（第 40~166 行，共 127 行），
+     计算 SHA256：381d47dfae675d7c
+  4. 由于 M2-D 的 run_scenario 函数体与当前 run_scenario 函数体完全相同
+     （只是现在多了后续追加的函数），所以 run_scenario 未改动。
+
+文件级 hash 变化（整体文件变大了，因为追加了两个新函数）：
+  M2-D 时 pipeline.py SHA256 前 16 位: 5E1DF3E774C73657
+  本轮后 pipeline.py SHA256 前 16 位: D9A1FD207DAAD009
+  （变化原因：新增 run_turn + run_session 两个函数，run_scenario 本身未变）
+
+
+3. scripts/probe_session.py 完整原文
+
+# ============================================================
+# probe_session.py · M2-D 修正探针
+# 验证会话模式下写入侧真的跨轮积累
+# ============================================================
+
+import sys
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+from pipeline import run_session
+
+
+def check(label, condition, detail=""):
+    if condition:
+        print(f"  {label} ✓")
+        return True
+    print(f"  {label} ✗  {detail}")
+    return False
+
+
+def main():
+    all_ok = True
+
+    # ===== 实验一：7 轮 =====
+    print("=== 实验一：7 轮会话 ===")
+    logs, st = run_session(["被骂"] * 7, feature_mode="fixture")
+
+    print(f"  len(logs)                              = {len(logs)}")
+    print(f"  len(st['memory_buffer'])               = {len(st['memory_buffer'])}")
+    print(f"  len(st['raw_log'])                     = {len(st['raw_log'])}")
+    print(f"  len(st['archiver'].get_packages())     = {len(st['archiver'].get_packages())}")
+    print(f"  st['round_counter']                     = {st['round_counter']}")
+    print()
+
+    all_ok &= check("len(logs) == 7", len(logs) == 7, f"实际 = {len(logs)}")
+    all_ok &= check("memory_buffer 剩 3 轮", len(st["memory_buffer"]) == 3,
+                    f"实际 = {len(st['memory_buffer'])}")
+    all_ok &= check("raw_log 有 4 轮", len(st["raw_log"]) == 4,
+                    f"实际 = {len(st['raw_log'])}")
+    all_ok &= check("archiver 有 1 个包", len(st["archiver"].get_packages()) == 1,
+                    f"实际 = {len(st['archiver'].get_packages())}")
+    all_ok &= check("round_counter == 7", st["round_counter"] == 7,
+                    f"实际 = {st['round_counter']}")
+
+    if not all_ok:
+        print("TODO_REVIEW: 实验一断言失败")
+        return 1
+
+    # ===== 实验二：13 轮，验证两次归档 =====
+    print()
+    print("=== 实验二：13 轮会话（两次归档） ===")
+    logs2, st2 = run_session(["被骂"] * 13, feature_mode="fixture")
+
+    pkg_count = len(st2["archiver"].get_packages())
+    raw_len = len(st2["raw_log"])
+    buf_len = len(st2["memory_buffer"])
+    rnd = st2["round_counter"]
+
+    print(f"  len(logs)                              = {len(logs2)}")
+    print(f"  len(st['memory_buffer'])               = {buf_len}")
+    print(f"  len(st['raw_log'])                     = {raw_len}")
+    print(f"  len(st['archiver'].get_packages())     = {pkg_count}")
+    print(f"  st['round_counter']                     = {rnd}")
+    print()
+
+    all_ok &= check("len(logs) == 13", len(logs2) == 13, f"实际 = {len(logs2)}")
+    all_ok &= check("archiver 有 2 个包", pkg_count == 2, f"实际 = {pkg_count}")
+    all_ok &= check("raw_log 有 8 轮", raw_len == 8, f"实际 = {raw_len}")
+    all_ok &= check("memory_buffer 剩 5 轮", buf_len == 5, f"实际 = {buf_len}")
+    all_ok &= check("round_counter == 13", rnd == 13, f"实际 = {rnd}")
+
+    # 验证 raw_log 里的轮次 id
+    all_ids = st2["raw_log"].all_ids()
+    print(f"  raw_log all_ids = {all_ids}")
+    # 两次归档：第一次归档 round 1~4，第二次归档 round 5~8
+    all_ok &= check("raw_log 含 8 条 id: 1~8", all_ids == list(range(1, 9)),
+                    f"实际 = {all_ids}")
+
+    print()
+    if all_ok:
+        print("探针完成，全部断言通过")
+        return 0
+    else:
+        print("TODO_REVIEW: 断言失败")
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+
+
+4. 探针运行输出原文
+
+=== 实验一：7 轮会话 ===
+  len(logs)                              = 7
+  len(st['memory_buffer'])               = 3
+  len(st['raw_log'])                     = 4
+  len(st['archiver'].get_packages())     = 1
+  st['round_counter']                     = 7
+
+  len(logs) == 7 ✓
+  memory_buffer 剩 3 轮 ✓
+  raw_log 有 4 轮 ✓
+  archiver 有 1 个包 ✓
+  round_counter == 7 ✓
+
+=== 实验二：13 轮会话（两次归档） ===
+  len(logs)                              = 13
+  len(st['memory_buffer'])               = 5
+  len(st['raw_log'])                     = 8
+  len(st['archiver'].get_packages())     = 2
+  st['round_counter']                     = 13
+
+  len(logs) == 13 ✓
+  archiver 有 2 个包 ✓
+  raw_log 有 8 轮 ✓
+  memory_buffer 剩 5 轮 ✓
+  round_counter == 13 ✓
+  raw_log all_ids = [1, 2, 3, 4, 5, 6, 7, 8]
+  raw_log 含 8 条 id: 1~8 ✓
+
+探针完成，全部断言通过
+
+
+5. 断言结果
+
+通过。两个实验共 11 项断言全部通过，无 TODO_REVIEW。
+
+
+6. pytest 完整输出
+
+============================= test session starts =============================
+platform win32 -- Python 3.10.11, pytest-9.1.1, pluggy-1.6.0 -- C:\Users\honorx301\AppData\Roaming\TRAE SOLO CN\ModularData\ai-agent\vm\tools\python\python.exe
+cachedir: .pytest_cache
+rootdir: D:\aiqg\emotion_agent
+collecting ... collected 15 items
+
+tests/test_feature_encoder.py::test_empty_text PASSED                    [  6%]
+tests/test_feature_encoder.py::test_punctuation_only PASSED              [ 13%]
+tests/test_feature_encoder.py::test_zuobuhao_not_misjudged PASSED        [ 20%]
+tests/test_feature_encoder.py::test_task_relevance PASSED                [ 26%]
+tests/test_full_pipeline_smoke.py::test_encoder_mode_no_crash PASSED     [ 33%]
+tests/test_limits.py::test_clip_bounds PASSED                            [ 40%]
+tests/test_memory_writeback.py::test_danger_score_formula PASSED         [ 46%]
+tests/test_policy.py::test_policy_priority PASSED                        [ 53%]
+tests/test_reproducibility.py::test_config_seed_frozen PASSED            [ 60%]
+tests/test_schemas.py::test_hippocampal_field_name PASSED                [ 66%]
+tests/test_schemas.py::test_dimensions PASSED                            [ 73%]
+tests/test_schemas.py::test_weight_lengths PASSED                        [ 80%]
+tests/test_schemas.py::test_keyword_intersection PASSED                  [ 86%]
+tests/test_schemas.py::test_event_embedding_field PASSED                 [ 93%]
+tests/test_three_scenarios.py::test_action_expectations PASSED           [100%]
+
+============================= 15 passed in 0.69s =============================
+
+
+7. main.py 三场景 action 输出
+
+================================================================================
+M1 三场景验收 · fixture 模式
+================================================================================
+被骂     action=suppress     expected=suppress     PASS
+被夸     action=task_first   expected=task_first   PASS
+被质疑    action=reappraise   expected=reappraise   PASS
+--------------------------------------------------------------------------------
+fixture 验收：全部通过
+
+================================================================================
+M1 encoder 模式冒烟（不断言 action，只检查字段完整）
+================================================================================
+被骂     冒烟通过（action=suppress）
+被夸     冒烟通过（action=reappraise）
+被质疑    冒烟通过（action=reappraise）
+--------------------------------------------------------------------------------
+encoder 冒烟：全部通过
+
+M1 总验收：通过
+
+
+8. hash 对比（SHA256 前 16 位）
+
+上一轮基准：M2-D 写入侧核查回报
+
+文件名               改前            改后            备注
+pipeline.py          5E1DF3E774C73657 D9A1FD207DAAD009 本轮修改（追加 run_turn + run_session）
+
+run_scenario 函数级 hash 验证：
+  当前 run_scenario 函数体（第 40~166 行，127 行）SHA256 前 16 位 = 381d47dfae675d7c
+  结论：run_scenario 本身未改动（修改方式为文件末尾追加新函数，原函数一字未动）
+
+其余模块全部与上一轮基准一致：
+config.py            9E29DFB400393D12 9E29DFB400393D12 一致
+state.py             BD6E89D417F737AA BD6E89D417F737AA 一致
+schemas.py           1EFEA80C332E6E09 1EFEA80C332E6E09 一致
+short_term_buffer.py 6012DC2F7211622E 6012DC2F7211622E 一致
+archiver.py          8B489CBAF8DF0140 8B489CBAF8DF0140 一致
+raw_log.py           29F66391403E9A99 29F66391403E9A99 一致
+decompressor.py      C2D21C7D882F278E C2D21C7D882F278E 一致
+fast_path.py         25D837BF496060BD 25D837BF496060BD 一致
+slow_path.py         34540EF43E1CE240 34540EF43E1CE240 一致
+emotion.py           5C3B62AE2F1F2116 5C3B62AE2F1F2116 一致
+emotion_releaser.py  98FC7D769E003194 98FC7D769E003194 一致
+intercept.py         F594D53EDADBC353 F594D53EDADBC353 一致
+policy.py            0E541AF602A60E9A 0E541AF602A60E9A 一致
+hippocampal_evaluator.py 4B7317DE2B03F7CF 4B7317DE2B03F7CF 一致
+xinguang.py          694FCCDA9BDB885E 694FCCDA9BDB885E 一致
+memory_graph.py      FD7FB1058E22F8D9 FD7FB1058E22F8D9 一致
+feature_encoder.py   7E960C11F2D54FD3 7E960C11F2D54FD3 一致
+event_parser.py      BD7F71EAB7F1264C BD7F71EAB7F1264C 一致
+state_translator.py  B9EA5135060DA6A2 B9EA5135060DA6A2 一致
+prompt_builder.py    15DE0D3EEA9C8D1E 15DE0D3EEA9C8D1E 一致
+llm_client.py        93580C7D67A5029C 93580C7D67A5029C 一致
+logger.py            76A179D173979B1D 76A179D173979B1D 一致
+main.py              A580118515DBF54C A580118515DBF54C 一致
+multimodal.py        6C2978D1A872E615 6C2978D1A872E615 一致
+
+本轮新增：
+  scripts/probe_session.py
+
+停止，等待裁决。

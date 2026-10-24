@@ -255,7 +255,7 @@ def _load_secrets():
 # ---- MockLLM ----
 
 class MockLLM:
-    def generate(self, prompt, temperature=None):
+    def generate(self, prompt, temperature=None, messages=None):
         return f"[MOCK] 收到 prompt，长度 {len(prompt)}"
 
 
@@ -267,15 +267,21 @@ class DeepSeekLLM:
         self.base_url = base_url.rstrip("/")
         self.model = model
 
-    def generate(self, prompt, temperature=None):
+    def generate(self, prompt, temperature=None, messages=None):
         url = f"{self.base_url}/chat/completions"
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.api_key}",
         }
+        # [055] messages 优先：调用方传多轮对话时原样使用；
+        #   未传则退回单条 user（旧调用点与探针行为不变）。
+        if messages:
+            _msgs = list(messages)
+        else:
+            _msgs = [{"role": "user", "content": prompt}]
         payload = {
             "model": self.model,
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": _msgs,
             "temperature": (config.LLM_TEMPERATURE if temperature is None
                             else float(temperature)),
             "max_tokens": config.LLM_MAX_TOKENS,

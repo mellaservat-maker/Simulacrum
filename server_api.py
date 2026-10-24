@@ -46,6 +46,7 @@ from state import reset_state                          # noqa: E402
 from chat_cli_v6 import chat_turn                      # noqa: E402
 from llm_client import (token_stats, LLMUnavailableError)   # noqa: E402
 import session_store                                   # noqa: E402
+from session_store import _dump_relationships          # noqa: E402  [056]
 
 app = FastAPI(title="emotion_agent bridge", version="6.4")
 
@@ -191,6 +192,8 @@ def _state_payload(st, log=None):
         "round": st.get("round_counter", 0),
         "buffer": len(st["memory_buffer"]),
         "packages": len(st["archiver"].get_packages()),
+        # [053] 归档健康度：丢包事件 / 回灌重试 / 放弃批数
+        "archive": st["archiver"].stats(),
         "tokens": token_stats(),
         # [041] 性格、破防冷却与阈值，前端直接展示
         "profile_id": str(st.get("profile_id", config.PERSONALITY_DEFAULT)),
@@ -209,6 +212,9 @@ def _state_payload(st, log=None):
         "e0": None,
         "e": None,
         "action": None,
+        # [056 任务3] 关系账本（前端"当前关系"栏）。只回显数值，
+        #   无敏感信息；未跑过轮的会话也有初始账本（trust 0.5）。
+        "relationships": _dump_relationships(st.get("relationships")),
     }
     if src is not None:
         base.update({

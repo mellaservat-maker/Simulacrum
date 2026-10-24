@@ -1,0 +1,191 @@
+M2-D 写入侧核查回报
+日期：2026-10-06
+状态：等待裁决
+
+
+1. 任务 1：pipeline.py 中 run_scenario 函数完整原文
+
+def run_scenario(scenario, feature_mode="fixture"):
+    fx = get_fixture(scenario)
+    st = reset_state(seed=42)
+
+    now = time.time()
+
+    if feature_mode == "fixture":
+        x = fx["x"]
+        x_fast = fx["x_fast"]
+        event = event_parse(
+            fx["input"],
+            event_severity=fx["event_severity"],
+            importance=fx["importance"],
+            emotion_weight=fx["emotion_weight"],
+            unfinished=fx["unfinished"],
+            danger_score=fx["danger_score"],
+        )
+    elif feature_mode == "encoder":
+        event = event_parse(
+            fx["input"],
+            event_severity=fx["event_severity"],
+            importance=fx["importance"],
+            emotion_weight=fx["emotion_weight"],
+            unfinished=fx["unfinished"],
+            danger_score=fx["danger_score"],
+        )
+        x, x_fast = feature_encode(
+            event, st["M_prev"], st["HabituationSignal_prev"], st["B"], st["memory_graph"]
+        )
+    else:
+        raise ValueError(f"Unknown feature_mode: {feature_mode}")
+
+    # 心光预算（用回合开始的 B）
+    B = st["B"]
+    B_xg = update_xinguang_budget(B[0], B[1])
+
+    # 海马体评估
+    hippo = hippocampal_evaluate(event, st["memory_graph"], x, B_xg, now)
+    M = hippo["M"]
+    ReframedContext = hippo["ReframedContext"]
+    HabituationSignal = hippo["HabituationSignal"]
+    HistoricalResidual = hippo["HistoricalResidual"]
+    M_text = hippo["M_text"]
+
+    # 读取侧（M2-D，默认关闭，只记录不影响评估）
+    if MEMORY_READ_ENABLED:
+        packages = st["archiver"].get_packages()
+        if packages:
+            latest = packages[-1]
+            recalled = st["decompressor"].for_emotion_evaluator(latest)
+            st["recalled_memory"] = recalled
+    else:
+        st["recalled_memory"] = None
+
+    # 快通路（可能更新 B[1]）
+    D_fast, B = run_fast_path(x_fast, B)
+
+    # 慢通路（用更新后的 B）
+    D_slow, V = run_slow_path(x, ReframedContext, M, B, st["w_PFC"], HabituationSignal)
+
+    # 情绪释放器
+    raw_emotion_impact, released_impact, release_rate = run_releaser(V, D_fast, HabituationSignal)
+
+    # 情绪加点
+    E_raw = run_emotion(st["E_prev"], released_impact, B)
+
+    # 拦截层
+    neg_intensity, S_E, D_error, I_inhibit, E_final, w_PFC_new = run_intercept(E_raw, st["w_PFC"])
+
+    # 策略
+    action = policy_minimal(E_final, I_inhibit, fx["event_severity"])
+
+    # 状态翻译 + prompt + LLM
+    monologue = state_to_prompt(E_final, I_inhibit, M_text, HistoricalResidual, HabituationSignal)
+    prompt = build_prompt(monologue, fx["input"])
+    llm_output = get_llm().generate(prompt)
+
+    # 回写识海（5 字段，5.5.14）
+    event.event_severity = fx["event_severity"]
+    event.danger_score = float(np.clip(V[1] * 2 - 0.5, -1.0, 1.0))
+    event.importance = fx["importance"]
+    event.emotion_weight = fx["emotion_weight"]
+    event.unfinished = fx["unfinished"]
+    st["memory_graph"].add(event)
+
+    log = {
+        "x": x,
+        "x_fast": x_fast,
+        "B": B,
+        "D_fast": D_fast,
+        "B_xg": B_xg,
+        "D_slow": D_slow,
+        "V": V,
+        "raw_emotion_impact": raw_emotion_impact,
+        "released_impact": released_impact,
+        "E_raw": E_raw,
+        "neg_intensity": neg_intensity,
+        "S_E": S_E,
+        "D_error": D_error,
+        "I_inhibit": I_inhibit,
+        "E_final": E_final,
+        "w_PFC": w_PFC_new,
+        "release_rate": release_rate,
+        "HabituationSignal": HabituationSignal,
+        "HistoricalResidual": HistoricalResidual,
+        "M_text": M_text,
+        "action": action,
+        "feature_mode": feature_mode,
+        "llm_output": llm_output,
+    }
+
+    log_path = os.path.join(LOGS_DIR, LOG_FILES[scenario])
+    write_log(log_path, log)
+
+    # 写入侧（M2-D）：每轮结束写缓冲区，达阈值归档
+    if MEMORY_WRITE_ENABLED:
+        st["round_counter"] += 1
+        st["memory_buffer"].append({
+            "round_id": st["round_counter"],
+            "user_input": fx["input"],
+            "ai_output": llm_output,
+            "timestamp": now,
+        })
+        if st["archiver"].should_archive():
+            st["archiver"].archive()
+
+    return log
+
+
+2. 任务 2：pipeline.py 中所有 reset_state( 的调用位置
+
+d:\aiqg\emotion_agent\pipeline.py 第 42 行:
+    st = reset_state(seed=42)
+
+仅这一处。在 run_scenario 函数开头第一行。
+
+
+3. 任务 3：四个逐条回答
+
+问题 1：调用 run_scenario("被骂", feature_mode="fixture") 时，函数内部是否每次都会 reset_state(seed=42)？
+
+是。
+run_scenario 函数第 42 行 st = reset_state(seed=42) 在函数开头第一行，
+每次调用 run_scenario 都会执行这一行，状态 st 是每次调用都全新创建的。
+
+
+问题 2：如果是"每次新建 st"，那么写入侧写进去的内容，在函数返回后：
+
+不会被保存到任何跨调用存活的地方，随 st 一起被丢弃。
+理由：st 是 run_scenario 内部的局部变量，函数返回后 st 的引用消失，
+Python 垃圾回收会释放这个 dict 以及它里面的 memory_buffer/raw_log/archiver 等对象。
+下一次调用 run_scenario 时会重新 reset_state 生成全新的 st。
+
+
+问题 3：在当前实现下，连续调用 run_scenario 7 次，st["archiver"] 里的 _packages 最终会有几个？
+
+0 个（因为每次 reset 清空）。
+判断依据：
+  - 每次调用 run_scenario 都在第 42 行重新执行 reset_state(seed=42)，生成全新的 st
+  - 新的 st 里 memory_buffer 是空的，archiver._packages 也是空的
+  - 每轮只写 1 条记录到 buffer，buffer 里永远只有 1 条（当次写入的）
+  - 1 < 阈值 6，should_archive 永远返回 False，永远不会触发归档
+  - 所以 _packages 永远是空列表，长度为 0
+
+
+问题 4：如果答案是"每次 reset 清空、永远攒不到阈值"，请明确说明：
+
+M2-D 写入侧在"真实主链路调用"中实际无效。
+写入的代码是对的（append / should_archive / archive 的逻辑都没问题），
+但 run_scenario 的设计是"每次调用新建 st"，这是单场景验收模式的接口，
+而写入侧需要"跨多轮积累 st"才能触发归档——两者接口不匹配。
+
+这是接口设计问题，不是代码逻辑问题：
+  - 代码逻辑本身没问题（buffer / archiver / raw_log 单元测试都通过了）
+  - 但 run_scenario 这个入口函数每次重置状态，导致写入侧没有机会积累到阈值
+  - 记忆写入需要的是"多轮对话共享同一个 st"的会话模式，而 run_scenario 是"单场景单轮"模式
+
+
+4. 一句话结论
+
+M2-D 写入侧在真实主链路（run_scenario 入口）里，无效。
+
+
+停止，等待裁决。

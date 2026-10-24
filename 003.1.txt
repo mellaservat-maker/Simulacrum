@@ -1,0 +1,181 @@
+本文件属于 003 号工作。
+
+T24 收尾执行回报：登记 L28 / T30 / T31 + V4.6 快照与V46 hash 基准
+
+================================================================
+一、config.py 中 L28 / T30 / T31 原文
+================================================================
+改动文件：d:\aiqg\emotion_agent\config.py
+改动方式：纯注释登记，未动任何参数值、未动任何可执行代码。
+config.py hash：18A9C215DE01C276 -> A794B6E31ED2D0AA
+config.py 行数：187 -> 190（净增 3 行，与三条登记一一对应）
+
+L28（位于已知限制区，接在 L27 之后，现为第 156 行）：
+
+# [M3 已知限制] L28 T24 把召回情绪值加在 tanh 之外，ReframedContext 逐维绝对值可达 1.8，超出 tanh 原始值域 [-1,1]
+
+T30（位于 M3 TODO 区，接在 T29 之后，现为第 190 行）：
+
+# [M3 TODO] T30 考虑把召回情绪值注入改到 tanh 内部（需碰 hippocampal_evaluator.py）
+
+T31（位于 M3 TODO 区，接在 T30 之后，现为第 191 行，亦为文件末行）：
+
+# [M3 TODO] T31 明确召回对当前评估的作用方向：放大危险（现状）还是习惯化削弱，待所有者决策
+
+三条均为原样登记，未改写措辞、未附加解释。
+config.py 中原有 L25~L27、T27~T29 全部保持原样，一行未动。
+
+================================================================
+二、V4.6 快照
+================================================================
+快照路径：d:\aiqg\emotion_agent_snapshot_v46\
+
+文件总数：115 个
+其中 .py 文件数：61 个
+
+排除项实测校验（快照内计数，全部应为 0，实测全部为 0）：
+  __pycache__ 相关路径：0
+  .pytest_cache 相关路径：0
+  secrets_local.py：0
+  logs 相关路径：0
+
+.py 文件数说明：
+  V4.5 快照为 60 个 .py，V4.6 为 61 个，差值 1即 T24 新建的 scripts/probe_t24.py。
+  secrets_local.py 虽存在于工作目录，但已被排除，未计入 61 条。
+
+快照与工作目录的 .py 集合一致性：已实测，61 = 61，无遗漏无多余。
+
+================================================================
+三、V46_hash基准.txt 完整内容
+================================================================
+文件路径：d:\aiqg\emotion_agent\V46_hash基准.txt
+文件大小：2898 字节
+条目数：61 条
+生成方式：脚本对 v46 快照目录直接采集 sha256sum 直写，未手工转录。
+
+完整内容如下：
+
+V4.6 hash 基准
+
+生成日期：2026-10-07
+快照目录：d://aiqg//emotion_agent_snapshot_v46//
+算法：SHA256，取前 16 位，大写
+排除项：secrets_local.py、__pycache__、.pytest_cache、logs
+排序：按文件名字母序
+文件总数：61
+
+格式：SHA256前16位  文件相对路径
+
+
+F7B5AFB2D121B4C8  archiver.py
+A794B6E31ED2D0AA  config.py
+C2D21C7D882F278E  decompressor.py
+528806BDAD7CBCBF  embedder.py
+5C3B62AE2F1F2116  emotion.py
+98FC7D769E003194  emotion_releaser.py
+BFFC141291CB680C  event_parser.py
+25D837BF496060BD  fast_path.py
+7E960C11F2D54FD3  feature_encoder.py
+4B7317DE2B03F7CF  hippocampal_evaluator.py
+F594D53EDADBC353  intercept.py
+A2ADA2B77F02C4D1  llm_client.py
+76A179D173979B1D  logger.py
+A580118515DBF54C  main.py
+FD7FB1058E22F8D9  memory_graph.py
+6C2978D1A872E615  multimodal.py
+5899A7E7D3345BA7  pipeline.py
+0E541AF602A60E9A  policy.py
+15DE0D3EEA9C8D1E  prompt_builder.py
+29F66391403E9A99  raw_log.py
+1EFEA80C332E6E09  schemas.py
+4BA3C4DE6087DFC9  scripts/auto_chat.py
+BC4AE2CC74AC004E  scripts/chat_cli.py
+A7D263E1283AC1CE  scripts/probe_archiver.py
+AFB82DE983DA51F3  scripts/probe_buffer.py
+0A0198EFC4C01F75  scripts/probe_decompressor.py
+C2A9032BB68FD94D  scripts/probe_embedder.py
+F3D98A8BF2CBB815  scripts/probe_heuristic_change.py
+EAF7273548E74E36  scripts/probe_llm_switch.py
+929FE0AB2D0F6FBF  scripts/probe_memory_pipeline.py
+A7BBDD669EB83309  scripts/probe_numeric.py
+35E8E6583CF88AC0  scripts/probe_planC.py
+710BBFDEE7B8500B  scripts/probe_prompt_render.py
+215721FABD15DBC9  scripts/probe_rank_divergence.py
+D59C497E50CECD0D  scripts/probe_read_side.py
+4A649C7711B2CF4A  scripts/probe_real_prompt.py
+D8FD1862844A2FA7  scripts/probe_recall_with_history.py
+C6CDF2734DDAB988  scripts/probe_session.py
+491BEEBD10E66919  scripts/probe_t24.py
+807F17B4A25AA54E  scripts/probe_t3b_smoke.py
+7C79AA917181A972  scripts/probe_v43_realstate.py
+0A2547C197C2AAB3  scripts/probe_v_inputs.py
+6F08E5A422AC8DC4  scripts/probe_xinguang.py
+70D7B9EF08A04C12  scripts/probe_xinguang_budget.py
+E00CD6BEEBDD0D39  scripts/run_real_llm_check.py
+CA05A989743DE7F2  scripts/verify_scenarios.py
+6012DC2F7211622E  short_term_buffer.py
+34540EF43E1CE240  slow_path.py
+979E1427716F8277  state.py
+A5F0552D2E5DC3A8  state_translator.py
+E3B0C44298FC1C14  tests/__init__.py
+D8E676625B5CF4CE  tests/fixtures.py
+78C9F71F0B205E74  tests/test_feature_encoder.py
+84B3B1B3D0A5C2DB  tests/test_full_pipeline_smoke.py
+F065D29062FB22C4  tests/test_limits.py
+7AEC84A7DD93A329  tests/test_memory_writeback.py
+E17BAAE10E8F5D9D  tests/test_policy.py
+1CCE50D6E6CE7FD7  tests/test_reproducibility.py
+3412C5CB42284985  tests/test_schemas.py
+C41959EAC1B35013  tests/test_three_scenarios.py
+694FCCDA9BDB885E  xinguang.py
+
+
+  本表由脚本对 v46 快照目录直接采集 sha256sum 生成，未手工转录。
+  采集自快照目录而非工作目录，两者当前 py 文件集合一致（61 个）。
+
+校验记录（依铁律「hash 表一律脚本生成 + diff 校验，绝不手抄」）：
+
+  校验 1（快照目录独立重算 vs 文件正文）：
+    用 sha256sum 对 v46 快照目录重算 61 条，
+    与 V46_hash基准.txt 的 61 条做 diff，结果无差异（PASS）。
+
+  校验 2（V46 基准 vs 工作目录实时 hash）：
+    工作目录 61 条与基准 61 条逐条 diff，结果无差异（PASS），零不符。
+    工作目录中不存在基准外的 .py（secrets_local.py 已按规则排除）。
+
+  校验 3（V46 基准 vs V45 基准）：
+    变化 2 个：
+      config.py                18A9C215DE01C276 -> A794B6E31ED2D0AA
+      pipeline.py              EDC1F26A8720584B -> 5899A7E7D3345BA7
+    新增 1 个：
+      scripts/probe_t24.py     491BEEBD10E66919
+    缺失：0 个
+    未变条目：58 个
+    即V4.5 到 V4.6 只有本次授权的 config.py 登记、
+    上一号工作已授权并通过的 pipeline.py 改动、以及 T24 新建探针这三处差异，
+    其余 58 个 .py 一行未动。
+
+  校验过程中的一处失误（如实记录）：
+    首次做「基准 vs 工作目录」校验时用了 Python subprocess 调 sha256sum，
+    因 Windows 下输出路径带反斜杠，split() 把反斜杠误并入 hash 前缀，
+    导致 61 条全部误报为「不一致」。改用 shell 的 cut -c1-16 重取后，
+    61 条全部一致。此为校验脚本自身的 bug，非基准表问题，
+    已修正后重验通过，基准表未因此改动过一个字节。
+
+================================================================
+四、一句话结论
+================================================================
+003 号工作已完成：config.py 登记 L28 / T30 / T31 三条（纯注释，hash 18A9C215DE01C276 ->
+A794B6E31ED2D0AA），V4.6 快照建于 d:\aiqg\emotion_agent_snapshot_v46\（115 文件 / 61 py，
+排除项实测全0），V46_hash基准.txt 61 条经三重diff 校验与工作目录逐条一致，
+V4.5 到 V4.6 仅 config.py、pipeline.py 变化加新增 probe_t24.py，其余 58 个 .py 一行未动。
+
+================================================================
+五、本次工作产物清单
+================================================================
+汇报类：003.1.txt（本文件）
+产物类（保持原名，不参与编号）：
+  d:\aiqg\emotion_agent\V46_hash基准.txt（新建，2898 字节，61 条）
+  d:\aiqg\emotion_agent_snapshot_v46\（新建目录，115 文件 / 61 py）
+
+本次未新建探针脚本，未改任何 .py 可执行代码，未动任何参数值。

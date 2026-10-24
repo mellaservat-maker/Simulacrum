@@ -1,0 +1,524 @@
+M3-T3 第二阶段（T3-B）执行回报
+
+日期：2026-10-07
+执行方：新入场开发 AI
+依据：所有者转达的裁决结果
+状态：五处改动全部落地，三项验证全部执行完毕，已停手等待裁决
+
+
+一、快照目录路径与文件数
+
+  路径：d:\aiqg\emotion_agent_snapshot_pre_t3b\
+  文件总数：108（已排除 __pycache__）
+  .py 文件数：59
+
+  排除项实测核对：
+    secrets_local.py：0 个
+    logs 目录：0 个
+    __pycache__ 目录：0 个
+    .pytest_cache 目录：0 个
+
+  快照与改动前工作目录的 59 个 .py 哈希逐条一致。
+
+
+二、M3T3B_改动前_hash基准.txt 完整内容
+
+  文件路径：d:\aiqg\emotion_agent\M3T3B_改动前_hash基准.txt
+  算法：SHA256，取前 16 位，大写
+  排序：按文件名字母序
+  文件总数：59
+
+  528806BDAD7CBCBF  embedder.py
+  F7B5AFB2D121B4C8  archiver.py
+  9466A353AEB269AA  config.py
+  C2D21C7D882F278E  decompressor.py
+  5C3B62AE2F1F2116  emotion.py
+  98FC7D769E003194  emotion_releaser.py
+  BD7F71EAB7F1264C  event_parser.py
+  25D837BF496060BD  fast_path.py
+  7E960C11F2D54FD3  feature_encoder.py
+  4B7317DE2B03F7CF  hippocampal_evaluator.py
+  F594D53EDADBC353  intercept.py
+  A2ADA2B77F02C4D1  llm_client.py
+  76A179D173979B1D  logger.py
+  A580118515DBF54C  main.py
+  FD7FB1058E22F8D9  memory_graph.py
+  6C2978D1A872E615  multimodal.py
+  EDC1F26A8720584B  pipeline.py
+  0E541AF602A60E9A  policy.py
+  15DE0D3EEA9C8D1E  prompt_builder.py
+  29F66391403E9A99  raw_log.py
+  1EFEA80C332E6E09  schemas.py
+  4BA3C4DE6087DFC9  scripts/auto_chat.py
+  BC4AE2CC74AC004E  scripts/chat_cli.py
+  A7D263E1283AC1CE  scripts/probe_archiver.py
+  AFB82DE983DA51F3  scripts/probe_buffer.py
+  0A0198EFC4C01F75  scripts/probe_decompressor.py
+  C2A9032BB68FD94D  scripts/probe_embedder.py
+  F3D98A8BF2CBB815  scripts/probe_heuristic_change.py
+  EAF7273548E74E36  scripts/probe_llm_switch.py
+  929FE0AB2D0F6FBF  scripts/probe_memory_pipeline.py
+  A7BBDD669EB83309  scripts/probe_numeric.py
+  35E8E6583CF88AC0  scripts/probe_planC.py
+  710BBFDEE7B8500B  scripts/probe_prompt_render.py
+  215721FABD15DBC9  scripts/probe_rank_divergence.py
+  D59C497E50CECD0D  scripts/probe_read_side.py
+  4A649C7711B2CF4A  scripts/probe_real_prompt.py
+  D8FD1862844A2FA7  scripts/probe_recall_with_history.py
+  C6CDF2734DDAB988  scripts/probe_session.py
+  7C79AA917181A972  scripts/probe_v43_realstate.py
+  0A2547C197C2AAB3  scripts/probe_v_inputs.py
+  6F08E5A422AC8DC4  scripts/probe_xinguang.py
+  70D7B9EF08A04C12  scripts/probe_xinguang_budget.py
+  E00CD6BEEBDD0D39  scripts/run_real_llm_check.py
+  CA05A989743DE7F2  scripts/verify_scenarios.py
+  6012DC2F7211622E  short_term_buffer.py
+  34540EF43E1CE240  slow_path.py
+  BD6E89D417F737AA  state.py
+  A5F0552D2E5DC3A8  state_translator.py
+  E3B0C44298FC1C14  tests/__init__.py
+  D8E676625B5CF4CE  tests/fixtures.py
+  78C9F71F0B205E74  tests/test_feature_encoder.py
+  84B3B1B3D0A5C2DB  tests/test_full_pipeline_smoke.py
+  F065D29062FB22C4  tests/test_limits.py
+  7AEC84A7DD93A329  tests/test_memory_writeback.py
+  E17BAAE10E8F5D9D  tests/test_policy.py
+  1CCE50D6E6CE7FD7  tests/test_reproducibility.py
+  D2D18FB14DC5C3FC  tests/test_schemas.py
+  EA455B944D06CD29  tests/test_three_scenarios.py
+  694FCCDA9BDB885E  xinguang.py
+
+  说明：本基准 59 条与 V4.4 封版基准表 55 条中的重合部分逐条一致；另 4 条为 M3 阶段新增文件。
+
+
+三、event_parser.py 改动后完整原文
+
+  # ============================================================
+  # event_parser.py · V4.5 · 模块1 事件拆解
+  # 规格：5.5.1 / 5.7
+  # 输出：EventNode + event_embedding
+  # V4.5（T3-B）：嵌入改用embedder.get_embedder("bge")，1024 维语义嵌入
+  # M1：极简解析，只提取 person/task
+  # ============================================================
+
+  import hashlib
+  import time
+
+  import numpy as np
+
+  from schemas import EventNode
+  from embedder import get_embedder
+
+
+  def hash_to_8d(raw_text):
+      """【已弃用】8 维 MD5 hash 嵌入，无语义。
+
+      仅保留供 scripts/probe_embedder.py 向后兼容验证使用（它比对
+      HashEmbedder 与本函数输出是否逐元素一致），主链路不再调用。
+      """
+      h = hashlib.md5(raw_text.encode()).digest()
+      vec = np.array([h[i] / 255.0 for i in range(8)])
+      return vec / (np.linalg.norm(vec) + 1e-8)
+
+
+  # 模块级单例：避免每次 parse 都重建 embedder（BGE 为懒加载，构造本身轻量）
+  _embedder = get_embedder("bge")
+
+
+  _PERSON_HINTS = ("你", "我", "他", "她", "它", "大家", "老板", "用户", "AI", "老师")
+  _TASK_HINTS = ("方案", "代码", "问题", "任务", "答案", "回复", "报告", "文档", "项目")
+
+
+  def _extract_persons(raw_text):
+      return [p for p in _PERSON_HINTS if p in raw_text]
+
+
+  def _extract_tasks(raw_text):
+      return [t for t in _TASK_HINTS if t in raw_text]
+
+
+  def parse(raw_text, event_id=None, timestamp=None,
+            event_severity=0.0, importance=0.5,
+            emotion_weight=0.5, unfinished=0.0,
+            danger_score=0.0):
+      if event_id is None:
+          event_id = "E" + str(int(time.time() * 1000) % 1000000)
+      if timestamp is None:
+          timestamp = time.time()
+
+      return EventNode(
+          event_id=event_id,
+          timestamp=timestamp,
+          raw_text=raw_text,
+          event_embedding=_embedder.encode(raw_text),
+          nodes={
+              "person": _extract_persons(raw_text),
+              "task": _extract_tasks(raw_text),
+              "topic": [],
+              "state": [],
+              "relation": [],
+          },
+          relationships=[],
+          importance=importance,
+          emotion_weight=emotion_weight,
+          unfinished=unfinished,
+          danger_score=danger_score,
+          event_severity=event_severity,
+      )
+
+
+四、config.py 改动处原文（含上下文）
+
+  改动一，第 23 至 25 行，维度常量
+
+    23	# 维度常量
+    24	n, n_f, m, k, c = 8, 4, 1024, 4, 4
+    25	K_XG = 3
+
+  改动二，第 40 至 44 行，参数维度
+
+    40	# 【方案A裁决】随机参数生成与探针 probe_numeric.py 一致（np.random.randn）
+    41	w_s = np.random.randn(8) * 0.1                  # [未校准]
+    42	u_s = np.random.randn(1024) * 0.1                # [未校准]
+    43	W_v = np.random.randn(2, 8) * 0.1               # [未校准]
+    44	U_v = np.random.randn(2, 1024) * 0.1             # [未校准]
+    45	v_v = np.array([0.5, 0.5])                      # [未校准]
+
+  说明：第 41 行 w_s 与第 43 行 W_v 未改动，仍为 8 维。
+
+  改动三，第 152 至 153 行，新增 L25
+
+    152	# [M2 已知限制] L24 M1 三场景 E_final[0] 区分度极低（-0.206~-0.220），state_translator 的"感受"话术永远落在"平静"档，无法体现被骂/被夸差异
+    153	# [M3 已知限制] L25 config.py 头注释（第 2 行）仍写「V4.2 · M1 冻结参数」，与上方版本记录 V4.4 不一致；本次仅登记，不夹带修改（等 T27）
+
+  改动四，第 183 至 184 行，新增 T27
+
+    183	# T26 重新设计"感受"判定依据，不再单看E_final[0]（可能应综合 I_inhibit 或多维情绪），依赖 L24
+    184	# [M3 TODO] T27 修正 config.py 头注释版本号（第 2 行仍写 V4.2，与版本记录 V4.4 矛盾），依赖 L25
+
+  改动后运行时实测维度核对：
+    w_s shape (8,)
+    W_v shape (2, 8)
+    u_s shape (1024,)
+    U_v shape (2, 1024)
+
+
+五、state.py 改动处原文
+
+  第 25 至 33 行：
+
+    25	    return {
+    26	        "E_prev": np.array(E_PREV_INIT),
+    27	        "w_PFC": W_PFC_INIT,
+    28	        "B": np.array(B_INIT),
+    29	        "M_prev": np.zeros(1024),
+    30	        "HabituationSignal_prev": 0.0,
+    31	        "memory_graph": LayeredMemoryGraph(),
+    32	        "memory_buffer": memory_buffer,
+    33	        "raw_log": raw_log,
+
+
+六、tests/test_three_scenarios.py 改动后全文
+
+  1	# ============================================================
+  2	# test_three_scenarios.py · V4.2
+  3	# 规格：第七部分 test_three_scenarios / Step 6 验收
+  4	# ============================================================
+  5	
+  6	import pytest
+  7	
+  8	from pipeline import run_scenario
+  9	
+  10	
+  11	@pytest.mark.skip(reason="M1 三场景标准已弃，M3 重建中")
+  12	def test_action_expectations():
+  13	    assert run_scenario("被骂", feature_mode="fixture")["action"] == "suppress"
+  14	    assert run_scenario("被夸", feature_mode="fixture")["action"] == "task_first"
+  15	    assert run_scenario("被质疑", feature_mode="fixture")["action"] == "reappraise"
+
+  说明：函数体三条断言完整保留，未删未改；文件头注释版本号按裁决不动。
+
+
+七、scripts/probe_t3b_smoke.py 全文 + 运行输出 + 断言结果
+
+  全文：
+
+    # ============================================================
+    # probe_t3b_smoke.py · M3-T3B 冒烟探针
+    # 验证 T3-B 维度解耦：x = 8 维、M = 1024 维、x_fast = 4 维
+    # ============================================================
+
+    import os
+    import sys
+
+    import numpy as np
+
+    ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if ROOT not in sys.path:
+        sys.path.insert(0, ROOT)
+
+    from pipeline import run_scenario
+    from hippocampal_evaluator import evaluate as hippocampal_evaluate
+    from event_parser import parse as event_parse
+    from state import reset_state
+    from xinguang import update_xinguang_budget
+
+
+    def main():
+        print("=== 1. 跑一轮完整链路（encoder 模式）===")
+        log = run_scenario("被骂", feature_mode="encoder")
+        print("run_scenario('被骂', feature_mode='encoder') 完成")
+
+        x = np.asarray(log["x"])
+        x_fast = np.asarray(log["x_fast"])
+
+        print()
+        print("=== 2. 维度实测 ===")
+
+        # M 不在 log 里，单独走一遍海马体评估取 M 的真实维度
+        st = reset_state(seed=42)
+        event = event_parse("你这个AI真蠢，什么都做不好。",
+                            event_severity=0.7,
+                            importance=0.8,
+                            emotion_weight=0.7,
+                            unfinished=0.3,
+                            danger_score=0.8)
+        B_xg = update_xinguang_budget(st["B"][0], st["B"][1])
+        hippo = hippocampal_evaluate(event, st["memory_graph"], x, B_xg, event.timestamp)
+        M = np.asarray(hippo["M"])
+
+        print("x维度      = %d" % x.shape[0])
+        print("M 维度      = %d" % M.shape[0])
+        print("x_fast 维度 = %d" % x_fast.shape[0])
+        print("event_embedding 维度 = %d" % np.asarray(event.event_embedding).shape[0])
+
+        print()
+        print("=== 3. 断言 ===")
+
+        problems = []
+
+        if x.shape[0] != 8:
+            problems.append("x 维度应为 8，实际 %d" % x.shape[0])
+        else:
+            print("x = 8: PASS")
+
+        if M.shape[0] != 1024:
+            problems.append("M 维度应为 1024，实际 %d" % M.shape[0])
+        else:
+            print("M = 1024: PASS")
+
+        if x_fast.shape[0] != 4:
+            problems.append("x_fast 维度应为 4，实际 %d" % x_fast.shape[0])
+        else:
+            print("x_fast = 4: PASS")
+
+        if np.asarray(event.event_embedding).shape[0] != 1024:
+            problems.append("event_embedding 维度应为 1024，实际 %d"
+                            % np.asarray(event.event_embedding).shape[0])
+        else:
+            print("event_embedding = 1024: PASS")
+
+        print()
+        if problems:
+            print("TODO_REVIEW")
+            for p in problems:
+                print("  " + p)
+            return 1
+
+        print("全部断言通过：x 与 M 已解耦，x=8 / M=1024 / x_fast=4")
+        return 0
+
+
+    if __name__ == "__main__":
+        sys.exit(main())
+
+  运行命令：run_with_venv.bat scripts\probe_t3b_smoke.py
+
+  运行输出：
+
+    Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+    === 1. 跑一轮完整链路（encoder 模式）===
+    Loading weights:   0%|          | 0/391 [00:00<?, ?it/s]Loading weights: 100%|██████████| 391/391 [00:00<00:00, 45625.78it/s]
+    run_scenario('被骂', feature_mode='encoder') 完成
+
+    === 2. 维度实测 ===
+    x维度      = 8
+    M 维度      = 1024
+    x_fast 维度 = 4
+    event_embedding 维度 = 1024
+
+    === 3. 断言 ===
+    x = 8: PASS
+    M = 1024: PASS
+    x_fast = 4: PASS
+    event_embedding = 1024: PASS
+
+    全部断言通过：x 与 M 已解耦，x=8 / M=1024 / x_fast=4
+
+  断言结果：4 项全部 PASS，无 TODO_REVIEW，退出码 0。
+
+
+八、pytest 完整输出
+
+  前置情况如实说明：
+    d:\aiqg\venv 原先未安装 pytest，venv 与系统 python 均无 pytest。
+    为能执行裁决要求的 pytest 验证，已在 venv 中执行 pip install pytest，
+    安装 pytest-9.1.1（附带 pluggy-1.6.0、iniconfig-2.3.0）。
+    此操作只装环境，未改任何项目文件。
+
+  运行命令：run_with_venv.bat -m pytest tests\ -v
+  退出码：1
+
+  ============================= test session starts =============================
+  platform win32 -- Python 3.10.11, pytest-9.1.1, pluggy-1.6.0 -- d:\aiqg\venv\Scripts\python.exe
+  cachedir: .pytest_cache
+  rootdir: d:\aiqg\emotion_agent
+  plugins: anyio-4.15.1
+  collecting ... collected 15 items
+
+  tests/test_feature_encoder.py::test_empty_text PASSED                    [  6%]
+  tests/test_feature_encoder.py::test_punctuation_only PASSED              [ 13%]
+  tests/test_feature_encoder.py::test_zuobuhao_not_misjudged PASSED        [ 20%]
+  tests/test_feature_encoder.py::test_task_relevance PASSED                [ 26%]
+  tests/test_full_pipeline_smoke.py::test_encoder_mode_no_crash PASSED     [ 33%]
+  tests/test_limits.py::test_clip_bounds PASSED                            [ 40%]
+  tests/test_memory_writeback.py::test_danger_score_formula PASSED         [ 46%]
+  tests/test_policy.py::test_policy_priority PASSED                        [ 53%]
+  tests/test_reproducibility.py::test_config_seed_frozen FAILED            [ 60%]
+  tests/test_schemas.py::test_hippocampal_field_name PASSED                [ 66%]
+  tests/test_schemas.py::test_dimensions FAILED                            [ 73%]
+  tests/test_schemas.py::test_weight_lengths PASSED                        [ 80%]
+  tests/test_schemas.py::test_keyword_intersection PASSED                   [ 86%]
+  tests/test_schemas.py::test_event_embedding_field PASSED                 [ 93%]
+  tests/test_three_scenarios.py::test_action_expectations SKIPPED (M1 ...) [100%]
+
+  ================================ FAILURES ===================================
+  ___________________________ test_config_seed_frozen ___________________________
+
+      def test_config_seed_frozen():
+          env = dict(os.environ)
+          env["PYTHONPATH"] = ROOT
+  >       r1 = subprocess.check_output(
+              ["python", "-c", "from config import w_s; print(w_s.tolist())"],
+              cwd=ROOT, env=env,
+          ).decode().strip()
+
+  tests\test_reproducibility.py:15:
+  E               subprocess.CalledProcessError: Command '['python', '-c', 'from config import w_s; print(w_s.tolist())']' returned non-zero exit status 1.
+
+  C:\Python310\lib\subprocess.py:526: CalledProcessError
+  ---------------------------- Captured stderr call -----------------------------
+  Traceback (most recent call last):
+    File "<string>", line 1, in <module>
+    File "d:\aiqg\emotion_agent\config.py", line 16, in <module>
+      import numpy as np
+  ModuleNotFoundError: No module named 'numpy'
+  ____________________________ test_dimensions _______________________________
+
+      def test_dimensions():
+  >       assert n == 8 and m == 8 and k == 4 and c == 4 and n_f == 4
+  E       assert (8 == 8 and 1024 == 8)
+
+  tests\test_schemas.py:16: AssertionError
+  =========================== short test summary info ============================
+  FAILED tests/test_reproducibility.py::test_config_seed_frozen - subprocess.Ca...
+  FAILED tests/test_schemas.py::test_dimensions - assert (8 == 8 and 1024 == 8)
+  ================== 2 failed, 12 passed, 1 skipped in 26.14s ===================
+
+  两项失败如实说明：
+
+  失败一，test_schemas.py::test_dimensions
+    原因：该测试硬断言 m == 8，是 M1 时期的旧维度断言。T3-B 已把 m 改为 1024，
+    该断言必然失败。此项属 M1 遗留测试未随维度升级更新，非本次改动引入的缺陷，
+    亦非 config.py 改动有误。按裁决要求未擅自修改该测试。
+
+  失败二，test_reproducibility.py::test_config_seed_frozen
+    原因：该测试第 15、20 行用裸命令 python 调起子进程，走的是系统解释器
+    C:\Python310\python.exe，而该解释器未安装 numpy，导致子进程 import config 即失败。
+    这是审查报告 4.4 已记录的既存问题（测试用系统 python 而非 venv 解释器），
+    与本次 T3-B 改动无关。按裁决要求未擅自修改该测试。
+
+  未使用任何 try/except 掩盖上述错误。
+
+
+九、main.py 三场景输出
+
+  运行命令：run_with_venv.bat main.py
+
+  Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+  ================================================================================
+  M1 三场景验收 · fixture 模式
+  ================================================================================
+  Loading weights:   0%|          | 0/391 [00:00<?, ?it/s]Loading weights: 100%|██████████| 391/391 [00:00<00:00, 36787.19it/s]
+  被骂     action=suppress     expected=suppress     PASS
+  被夸     action=reappraise   expected=task_first   FAIL
+  被质疑    action=reappraise   expected=reappraise   PASS
+  --------------------------------------------------------------------------------
+  fixture 验收：失败
+
+  ================================================================================
+  M1 encoder 模式冒烟（不断言 action，只检查字段完整）
+  ================================================================================
+  被骂     冒烟通过（action=suppress）
+  被夸     冒烟通过（action=task_first）
+  被质疑    冒烟通过（action=reappraise）
+  --------------------------------------------------------------------------------
+  encoder 冒烟：全部通过
+
+  M1 总验收：失败
+
+  如实记录说明：
+    被夸场景 fixture 模式 action 由 task_first 变为 reappraise。
+    按裁决，action 变化属预期，不是 bug。
+    encoder 模式三场景冒烟全部通过，说明全链路在 1024 维嵌入下可正常跑通不崩。
+    fixture 与 encoder 两模式被夸结果不一致（reappraise 与 task_first），
+    我不做判断，如实上报。
+
+
+十、hash 对比
+
+  改动前：59 个 .py
+  改动后：60 个 .py（新增 1 个）
+
+  改动的 4 个文件：
+
+    config.py
+      改前 9466A353AEB269AA
+      改后 D58B131B2B959749
+
+    event_parser.py
+      改前 BD7F71EAB7F1264C
+      改后 BFFC141291CB680C
+
+    state.py
+      改前 BD6E89D417F737AA
+      改后 979E1427716F8277
+
+    tests/test_three_scenarios.py
+      改前 EA455B944D06CD29
+      改后 C41959EAC1B35013
+
+  新增的 1 个文件：
+
+    scripts/probe_t3b_smoke.py
+      改后 807F17B4A25AA54E
+
+  其余 55 个 .py：与 M3T3B_改动前_hash基准.txt 逐条一致，无任何改动。
+
+  禁区文件核对（均未改动，哈希与基准一致）：
+    slow_path.py 34540EF43E1CE240
+    hippocampal_evaluator.py 4B7317DE2B03F7CF
+    xinguang.py 694FCCDA9BDB885E
+    feature_encoder.py 7E960C11F2D54FD3
+    embedder.py 528806BDAD7CBCBF
+
+  本轮新建的非 .py 文件（均在允许范围内）：
+    M3T3B_改动前_hash基准.txt
+
+
+十一、一句话结论
+
+  未完全完成：五处代码改动与新建探针全部落地，维度解耦验证通过（x=8 / M=1024 / x_fast=4），
+  但 pytest 有 2 项失败（test_schemas 的 m==8 旧断言、test_reproducibility 用系统 python 缺 numpy），
+  main.py fixture 模式被夸场景 action 由 task_first 变为 reappraise；两项失败与该action 变化均已如实报告，
+  未擅自修改任何测试，等顾问裁决。

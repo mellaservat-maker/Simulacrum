@@ -1,0 +1,177 @@
+M3-T3 第一阶段 · 环境准备与选型 · 待裁决
+日期：2026-10-06
+状态：等待裁决（尚未改动任何文件、尚未安装任何包）
+
+============================================================
+一、本次任务范围
+============================================================
+
+任务：M3-T3 第一阶段 —— 环境准备 + 可插拔 embedder。
+
+硬性约束：不得修改任何现有 .py 文件，只允许新建文件。
+
+目标：为后续把 event_parser 的 hash_to_8d（无语义）替换为真语义向量做准备。
+本阶段只做两件事：
+1. 把嵌入所需的环境准备好（torch + sentence-transformers + 模型）。
+2. 新建一个可插拔的 embedder 模块（只新建，不动现有文件）。
+
+说明：本阶段不触碰 event_parser.py / config.py / state.py，真正替换放到后续阶段。
+
+
+============================================================
+二、环境现状核查（本次实测，非推测）
+============================================================
+
+1. Python 版本：3.10.11
+
+2. 解释器路径：
+   C:\Users\honorx301\AppData\Roaming\TRAE SOLO CN\ModularData\ai-agent\vm\tools\python\python.exe
+   注意：这是 TRAE 内置的 python，位于 C 盘。site-packages 也在 C 盘。
+
+3. 是否虚拟环境：否。
+   sys.prefix 等于上述内置路径，VIRTUAL_ENV 为空。即当前用的是全局环境。
+
+4. 嵌入相关依赖：已安装，无需再装。
+   sentence-transformers  6.1.0
+   torch                  2.14.1+cu126
+   transformers           5.18.0
+   huggingface_hub        1.33.0
+   numpy                  2.2.6
+
+5. 模型缓存（HuggingFace）：尚未生成，C 盘和 D 盘均无 .cache\huggingface 目录。
+
+
+============================================================
+三、核心阻塞：GPU 不可用（本次实测确认）
+============================================================
+
+1. 显卡：NVIDIA GeForce RTX 5060 Laptop GPU，显存 8GB。
+   驱动版本 616.56，CUDA UMD 版本 13.4。
+
+2. 实测 python -c "import torch; print(torch.cuda.is_available())" 返回 True，
+   但随即抛出兼容性告警，真实情况是内核不匹配，一旦真正跑张量会失败。
+
+3. torch 自带架构支持列表（实测输出）：
+   sm_50 sm_60 sm_61 sm_70 sm_75 sm_80 sm_86 sm_90
+   该列表中没有 sm_120，而 RTX 5060 的算力等级正是 CC 12.0（sm_120）。
+
+4. torch 原始告警（实测原文）：
+   NVIDIA GeForce RTX 5060 Laptop GPU with CUDA capability sm_120 is not
+   compatible with the current PyTorch installation.
+   The current PyTorch install supports CUDA capabilities
+   sm_50 sm_60 sm_61 sm_70 sm_75 sm_80 sm_86 sm_90.
+
+5. torch 官方给出的修复建议（实测原文）：
+   当前 torch==2.14.1+cu126 不含该 GPU 的内核，需按对应 CUDA 版本重装，例如：
+   cu130 / cu132 / cu134 三种构建。
+
+6. 结论：现有 torch 是 CPU 可用、GPU 不可用。若本阶段不处理，embedder 只能跑 CPU。
+
+
+============================================================
+四、维度牵连（若把 embedding 换成语义向量会动到的地方）
+============================================================
+
+以下为第一步只读侦察的结论，供裁决者评估改动范围，本阶段不动这些文件：
+
+1. config.py 第 41~44 行：w_s(8维)、u_s(8维)、W_v(2x8)、U_v(2x8)，
+   直接与 x（embedding）做矩阵乘，x 必须与 8 匹配。
+2. event_parser.py：hash_to_8d 硬编码 range(8)。
+3. state.py 第 29 行：M_prev = np.zeros(8)。
+4. slow_path.py：z_s = w_s @ (x + ReframedContext) + u_s @ M，x 与 M 均为 8 维。
+5. hippocampal_evaluator.py：M 归一化自适应，但 match_score 的 cosine 两边维度须一致。
+
+即：若最终把 embedding 换成 384 或 1024 维，config、state、event_parser 三处必改，
+其余链路基本自适应。这是后续阶段的事，本阶段只做环境与 embedder 骨架。
+
+
+============================================================
+五、磁盘现状（本次清理后）
+============================================================
+
+C 盘：总 299 GB，可用 91.6 GB，可用率 30.6%
+D 盘：总 607 GB，可用 193.9 GB，可用率 31.9%
+
+背景：用户要求“尽量都放在 D 盘”。此前已把 LM Studio 模型 61.76 GB 从 C 盘迁到 D 盘
+（D:\lmstudio_models，并在原位置建了 junction）。
+
+
+============================================================
+六、需要裁决的问题（三选一 + 选型）
+============================================================
+
+问题一：嵌入环境放在哪里？
+
+选项 A：在 D 盘新建独立 venv（例如 d:\aiqg\venv）
+  优点：依赖、模型、缓存全部落在 D 盘，C 盘零新增，最符合“都放 D 盘”。
+  代价：今后运行项目需改用该 venv 的 python；会改变现有运行方式（可提供启动脚本缓解）。
+  成本：需重新下载 torch（cu130 版，约 3~5 GB）到 D 盘。
+
+选项 B：在现有 TRAE python 环境里原地重装 GPU 版 torch
+  优点：运行方式完全不变，改动最小，最省事。
+  代价：约 3~5 GB 会落在 C 盘；且会改动现有全局环境，存在影响其他依赖的小风险。
+
+选项 C：先不修 GPU，embedder 先用 CPU 跑
+  优点：不下载大包，最快能跑通，零风险。
+  代价：BGE-Large 在 CPU 上较慢（每条约几十到上百毫秒）；GPU 通路未验证，遗留问题。
+
+问题二：可插拔 embedder 的默认语义后端用哪个模型？
+
+选项 1：BGE-Large-zh-v1.5
+  维度 1024，中文效果最好，模型约 1.3 GB。与之前既定方案一致。
+选项 2：bge-base-zh-v1.5
+  维度 768，模型约 400 MB，速度与效果折中。
+选项 3：bge-small-zh-v1.5
+  维度 512，模型约 100 MB，最快最省空间，效果略弱。
+
+说明：维度选择会直接决定后续 config.py / state.py 的改法，请一并裁定。
+
+问题三：本阶段“可插拔 embedder”的接口边界如何界定？
+
+建议接口（待裁决确认）：
+  新建 embedder.py，提供统一接口，例如：
+  - get_embedder(name) 工厂函数，按名称返回嵌入器实例
+  - 每个嵌入器暴露 dim 属性与 encode(texts) 方法
+  - 内置至少两个实现：HashEmbedder（复刻现有 8 维 hash，保持向后兼容）
+    与 BGEEmbedder（真语义向量）
+  - 默认后端由参数决定，不写死在调用处
+  是否同意此边界，或另有要求，请指示。
+
+
+============================================================
+七、我的建议（供参考）
+============================================================
+
+1. 环境位置：倾向选项 A（D 盘 venv），因为用户明确要求“尽量都放 D 盘”，
+   且 C 盘长期偏紧。但若裁决者更看重“不改变现有运行方式”，则选 B。
+2. 模型：倾向 BGE-Large-zh-v1.5（选项 1），与既定方案一致。
+3. GPU：建议在本阶段一并修好（装 cu130 版 torch），避免遗留问题。
+4. 接口：同意第六节问题三中的建议边界。
+
+若采纳建议，最终组合为：A + 选项 1 + 修 GPU + 建议接口。
+预计动作：新建 d:\aiqg\venv；安装 cu130 版 torch 与 sentence-transformers；
+设置 HF_HOME 与 pip 缓存到 D 盘；下载 BGE-Large-zh-v1.5；新建 embedder.py；
+新建 scripts\probe_embedder.py 做 cosine 相似度验证。全程不改任何现有 .py。
+
+
+============================================================
+八、附：本次实测命令与关键原始输出
+============================================================
+
+命令 1：python --version
+输出：Python 3.10.11
+
+命令 2：pip list 过滤 torch/sentence/transformers
+输出：sentence-transformers 6.1.0 / torch 2.14.1+cu126 / transformers 5.18.0
+      / huggingface_hub 1.33.0 / numpy 2.2.6
+
+命令 3：python -c "import torch; print(torch.cuda.is_available()); print(torch.cuda.get_arch_list())"
+输出：cuda_available True
+      arch_list ['sm_50','sm_60','sm_61','sm_70','sm_75','sm_80','sm_86','sm_90']
+      并抛出 sm_120 不兼容告警（见第三节第 4 条原文）
+
+命令 4：nvidia-smi
+输出：NVIDIA GeForce RTX 5060 Laptop GPU，8151MiB，驱动 616.56，CUDA UMD 13.4
+
+以上均为本次会话实测，未做任何安装或文件改动。
+停止，等待裁决。
